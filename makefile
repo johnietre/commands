@@ -2,32 +2,35 @@
 
 all: aliases pmdr prettypath pwdstore run search sock srvr start uproto
 
-aliases:
+aliases: bin
 	cp aliases/main.py bin/aliases && chmod u+x bin/aliases
 
-pmdr:
+pmdr: bin
 	g++ pmdr/main.cpp -o bin/pmdr -lpthread -std=gnu++17
 
-prettypath:
+prettypath: bin
 	cp prettypath/main.py bin/prettypath && chmod u+x bin/prettypath
 
-pwdstore:
-	go build -o bin/pwdstore pwdstore/main.go
+pwdstore: bin
+	go build -o bin/pwdstore ./pwdstore
 
-run:
+run: bin
 	g++ run/main.cpp -o bin/run -std=gnu++17
 
-search:
-	go build -o bin/search search/main.go
+search: bin
+	go build -o bin/search ./search
 
-sock:
+sock: bin
 	go build -o bin/sock ./sock
 
-srvr:
-	go build -o bin/srvr srvr/main.go
+srvr: bin
+	go build -o bin/srvr ./srvr
 
-start:
-	go build -o bin/start start/main.go
+start: bin
+	go build -o bin/start ./start
 
-uproto:
-	go build -o bin/uproto uproto/main.go
+uproto: bin
+	go build -o bin/uproto ./uproto
+
+bin:
+	mkdir $@
