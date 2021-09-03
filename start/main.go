@@ -1,4 +1,5 @@
 package main
+
 /*
  * Print files types that have templates in help printout
  * Allow multiple files to be input using bracket notation like with unix
@@ -21,17 +22,27 @@ import (
 	"fmt"
 	"os"
 	"path"
+	"runtime"
 	"strings"
 	"text/template"
 )
 
-const (
-	tempPath string = "/home/johnierodgers/.commands/start/templates/%s.txt"
+var (
+	tempPath string
 )
+
+func init() {
+	_, thisFile, _, ok := runtime.Caller(0)
+	if !ok {
+		fmt.Fprintln(os.Stderr, "error getting template directory")
+		os.Exit(1)
+	}
+	tempPath = path.Join(path.Dir(thisFile), "templates", "%s.txt")
+}
 
 func main() {
 	both := flag.Bool("b", false, "Create both a header and source file (C/C++)")
-  overwrite := flag.Bool("w", false, "Overwrite existing file if it exists")
+	overwrite := flag.Bool("w", false, "Overwrite existing file if it exists")
 	atom := flag.Bool("a", false, "Open file in Atom")
 	code := flag.Bool("c", false, "Open file in VSCode")
 	open := flag.Bool("o", false, "Open file in default app")
@@ -44,8 +55,8 @@ func main() {
 		switch arg {
 		case "-b":
 			*both = true
-    case "-w":
-      *overwrite = true
+		case "-w":
+			*overwrite = true
 		case "-a":
 			*atom = true
 		case "-c":
@@ -74,15 +85,15 @@ func main() {
 		editor = "vim"
 	}
 
-  if !(*overwrite) {
-    if _, err := os.Open(filepath); err == nil {
-      fmt.Fprintln(os.Stderr, "File already exists")
-      if editor != "" {
-        openEditor(editor, filepath)
-      }
-      return
-    }
-  }
+	if !(*overwrite) {
+		if _, err := os.Open(filepath); err == nil {
+			fmt.Fprintln(os.Stderr, "File already exists")
+			if editor != "" {
+				openEditor(editor, filepath)
+			}
+			return
+		}
+	}
 
 	ext := path.Ext(filepath)
 	name := path.Base(filepath)
@@ -94,7 +105,7 @@ func main() {
 		}
 		os.Exit(0)
 	}
-	name = name[:len(name) - len(ext)]
+	name = name[:len(name)-len(ext)]
 	hidden := (name[0] == '.')
 	if hidden {
 		name = name[1:]
@@ -113,17 +124,17 @@ func main() {
 		filetype = "go"
 	case ".h", ".hpp", ".h++":
 		filetype = "h"
-		replace = strings.ReplaceAll(strings.ToUpper(name + ext), ".", "_")
+		replace = strings.ReplaceAll(strings.ToUpper(name+ext), ".", "_")
 	case ".htm", ".html":
 		filetype = "htm"
 		replace = strings.ReplaceAll(strings.Title(name), "_", " ")
 	case ".jav", ".java":
 		filetype = "jav"
 		replace = name
-  case ".proto":
-    filetype = "proto"
-  case ".pl":
-    filetype = "pl"
+	case ".proto":
+		filetype = "proto"
+	case ".pl":
+		filetype = "pl"
 	case ".py":
 		filetype = "py"
 	case ".rs":
@@ -134,7 +145,7 @@ func main() {
 			fmt.Println(err)
 			os.Exit(2)
 		}
-    openEditor(editor, filepath)
+		openEditor(editor, filepath)
 		os.Exit(0)
 	}
 
@@ -152,10 +163,10 @@ func main() {
 		fmt.Println(err)
 		os.Exit(2)
 	}
-  if filetype == "py" || filetype == "pl" {
-    cmd := C.CString("chmod a+x " + filepath)
+	if filetype == "py" || filetype == "pl" {
+		cmd := C.CString("chmod a+x " + filepath)
 		C.system(cmd)
-  }
+	}
 	file.Close()
 
 	if *both {
@@ -169,7 +180,7 @@ func main() {
 				fmt.Println(err)
 				os.Exit(2)
 			}
-			fmt.Fprintf(file, "#include \"%s\"\n", name + ext)
+			fmt.Fprintf(file, "#include \"%s\"\n", name+ext)
 			file.Close()
 		} else if filetype == "c" || filetype == "cc" {
 			if ext == "cc" {
@@ -199,12 +210,12 @@ func main() {
 		}
 	}
 
-  openEditor(editor, filepath)
+	openEditor(editor, filepath)
 }
 
 func openEditor(editor, filepath string) {
-  if editor != "" {
-    cmd := C.CString(editor + " " + filepath)
-    C.system(cmd)
-  }
+	if editor != "" {
+		cmd := C.CString(editor + " " + filepath)
+		C.system(cmd)
+	}
 }
