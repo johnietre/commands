@@ -25,7 +25,7 @@ var (
 func main() {
 	var origin string
 	var hub, ws, server bool
-	flag.StringVar(&addr, "addr", ":8000", "Network address to connect/listen to")
+	flag.StringVar(&addr, "addr", "127.0.0.1:8000", "Network address to connect/listen to")
 	flag.StringVar(&origin, "origin", "", "(ws client only) origin of WS server (http/https, no port)")
 	flag.BoolVar(&hub, "hub", false, "Run server as a chat hub")
 	flag.BoolVar(&ws, "ws", false, "Connect using a web socket")
