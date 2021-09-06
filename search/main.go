@@ -2,15 +2,13 @@ package main
 // Doesn't follow symbolic links
 
 /* IDEAS
-* Use Peek method of bufio reader to check first bytes of file
-	(what isExecutable function does) in the searchFile function
-* Add "replace" feature
-* Add option to mute errors
+ * Look at sync.Pool
 */
 
 import (
 	"bufio"
 	"bytes"
+  "flag"
 	"fmt"
 	"io/ioutil"
 	"log"
@@ -19,121 +17,141 @@ import (
 	"regexp"
   "sort"
 	"strings"
+  "sync/atomic"
+  "time"
 )
 
 var (
 	what      string
 	rexpr     *regexp.Regexp
+  running int32 = 0
+  replaceWithPtr *string
 	foundChan = make(chan string, 5)
-	flags     = map[rune]bool{
-		'c': false, // Search file contents
-		'r': false, // Search directories recursively
-		'i': false, // Case-insensitive search
-    's': false, // Sort results
-	}
+	flags     = make(map[byte]bool)
 	ignoredFiles = map[string]bool{
-		".apng":  true,
-		".avif":  true,
-		".bmp":   true,
-		".cur":   true,
-		".dat":   true,
-		".docx":  true,
-		".gif":   true,
-		".ico":   true,
-		".jfif":  true,
-		".jpeg":  true,
-		".jpg":   true,
-		".pjpeg": true,
-		".pjp":   true,
-		".png":   true,
-		".pdf":   true,
-		".svg":   true,
-		".tif":   true,
-		".tiff":  true,
-		".webp":  true,
-		".xlsx":  true,
+		".apng":  true,	".avif":  true,	".bmp":   true,	".cur":   true,
+		".dat":   true,	".docx":  true,	".gif":   true,	".ico":   true,
+		".jfif":  true,	".jpeg":  true,	".jpg":   true,	".pjpeg": true,
+		".pjp":   true,	".png":   true,	".pdf":   true,	".svg":   true,
+		".tif":   true,	".tiff":  true,	".webp":  true,	".xlsx":  true,
 	}
 )
 
 func main() {
   log.SetFlags(0)
-	// The place to search (file or directory)
-	where := "./"
-	l := len(os.Args)
-	if l < 2 {
-		printHelp(1)
-	}
-	// The "what" must always be the first arg
-	what = os.Args[1]
-	// Get the flags and where, if provided
-	if l > 2 {
-		for i, arg := range os.Args[2:] {
-			if arg[0] == '-' {
-				// Cannot speciy multiple flags at once
-				if len(arg) != 2 {
-					log.Fatalf("Invalid flag: %s\n", arg)
-				}
-				switch arg[1] {
-				case 'c', 'r', 'i', 's':
-					flags[rune(arg[1])] = true
-				case 'h':
-					printHelp(0)
-				default:
-					log.Fatalf("Invalid flag: %s\n", arg)
-				}
-			} else {
-				// There where must always be the second argument
-				if i != 0 {
-					log.Fatalln(`Path must be specified second (after the "what")`)
-				}
-				where = arg
-			}
-		}
-	}
-	where = path.Clean(where)
+
+  // Create the flagset
+  flagSet := flag.NewFlagSet("search", flag.ExitOnError)
+  flagSet.Bool("c", false, "Search file contents")
+  flagSet.Bool("r", false, "Search directories recursively")
+  flagSet.Bool("i", false, "Case-insensitive search")
+  flagSet.Bool("s", false, "Sort results")
+  flagSet.Bool("m", false, "Mute non-fatal errors")
+  flagSet.Bool("n", false, "Count the number of occurrences")
+  flagSet.Bool("x", false, "Use regex")
+  replaceWithPtr = flagSet.String("p", "", "String to replace the \"what\" with")
+  flagSet.Usage = func() {
+    fmt.Fprintf(
+      flagSet.Output(),
+      "Usage of search what [where (optional)] [flags (optional)]\n",
+    )
+    flagSet.PrintDefaults()
+  }
+
+  // Make sure the minimum amount of arguments was passed
+  l := len(os.Args)
+  if l < 2 {
+    flagSet.Usage()
+    return
+  }
+
+  // The "what" must always be the first argument
+  what = os.Args[1]
+  var (
+    wheres []string // A list of places to search
+    flagStart = 0 // Where the flags start in the argument list
+  )
+  // Get the list of "wheres"
+  for i, arg := range os.Args[2:] {
+    if arg[0] == '-' {
+      flagStart = i + 2
+      break
+    }
+    wheres = append(wheres, arg)
+  }
+  if len(wheres) == 0 {
+    wheres = []string{"."}
+  }
+
+  // Parse the flags if there are any
+  if flagStart != 0 {
+    flagSet.Parse(os.Args[flagStart:])
+    flagSet.Visit(func(f *flag.Flag) {
+      flags[f.Name[0]] = true
+    })
+  }
+
 	// The statement to match against
 	regexStmt := what
 	if flags['i'] {
 		regexStmt = "(?i)" + regexStmt
 	}
 	var err error
-	if rexpr, err = regexp.Compile(regexStmt); err != nil {
-		log.Fatalln(err)
-	}
+  if flags['x'] {
+	  rexpr, err = regexp.Compile(regexStmt)
+  } else {
+    rexpr, err = regexp.Compile(regexp.QuoteMeta(regexStmt))
+  }
+  if err != nil {
+    log.Fatal(err)
+  }
 
-	// Check if the initial "where" is a file or directory
-	fstat, err := os.Stat(where)
-	if err != nil {
-		log.Fatalln(err)
-	}
-	switch mode := fstat.Mode(); {
-	case !mode.IsDir():
-		f, err := os.Open(where)
-		if err != nil {
-			log.Fatalln(err)
-		}
-		defer f.Close()
-		linenos, err := searchFile(f)
-		if err != nil {
-			log.Println(err)
-		}
-		if len(linenos) != 0 {
-			fmt.Printf("%s:%s\n", where, strings.Join(linenos, ","))
-		}
-		return
-	}
-	// Iterate through the directory and listen for matches on "foundChan"
-	dc := make(chan int, 1)
-	go searchDir(where, dc, true)
-  var results []string
-	for e := range foundChan {
-    if flags['s'] {
-      results = append(results, e)
-    } else {
-		  fmt.Println(e)
+  // Loop through the "wheres"
+  for _, where := range wheres {
+    // Check to make sure the "where" exists
+	  fstat, err := os.Stat(where)
+	  if err != nil {
+		  logf("%v", err)
+      continue
+	  }
+    if mode := fstat.Mode(); mode.IsRegular() {
+      // Run searchFile if the where is a regular file
+      go searchFile(where, false)
+	  } else if mode.IsDir() {
+      // Run searchDir if the where is a directory
+      go searchDir(where)
     }
-	}
-	<-dc
+  }
+  // Wait for at least one goroutine to spin up
+  time.Sleep(time.Millisecond * 50)
+  var results []string
+  // Get the results from the channel and wait for num running to hit 0
+  count := 0
+Loop:
+  for {
+    select {
+    case e := <-foundChan:
+      if flags['s'] {
+        if flags['n'] {
+          count += strings.Count(e, ",") + 1
+        }
+        results = append(results, e)
+      } else if !flags['n'] {
+        fmt.Println(e)
+      } else {
+        count += strings.Count(e, ",") + 1
+      }
+    default:
+      if atomic.LoadInt32(&running) == 0 {
+        break Loop
+      }
+    }
+  }
+  // Print the count, if requested
+  if flags['n'] {
+    fmt.Println(count)
+  }
+  // If sorting, sort the results
   if flags['s'] {
     sort.Strings(results)
     for _, res := range results {
@@ -142,15 +160,9 @@ func main() {
   }
 }
 
-func searchDir(dirPath string, dc chan<- int, initial bool) {
-	// Once the function returns, we need to notify the calling routing (dc chan)
-	// and close the foundChan if this is the initial "searchDir" call
-	defer func() {
-		if initial {
-			close(foundChan)
-		}
-		dc <- 1
-	}()
+func searchDir(dirPath string) {
+  atomic.AddInt32(&running, 1)
+  defer atomic.AddInt32(&running, -1)
 	entries, err := ioutil.ReadDir(dirPath)
   for err != nil {
     // If there are too many files open, try until success or different err
@@ -158,11 +170,9 @@ func searchDir(dirPath string, dc chan<- int, initial bool) {
       entries, err = ioutil.ReadDir(dirPath)
       continue
     }
-    log.Println(err)
+    logf("%v", err)
     return
   }
-	// Keep track of the number of directories searched
-	nDirs, doneChan := 0, make(chan int, 1)
 	for _, de := range entries {
     if de.Mode() & os.ModeSymlink != 0 {
       continue
@@ -174,36 +184,12 @@ func searchDir(dirPath string, dc chan<- int, initial bool) {
 			if ignoredFiles[path.Ext(de.Name())] {
 				continue
 			}
-			// Open file and make sure it's not an executable
-TooMany:
-			f, err := os.Open(fullPath)
-			if err != nil {
-        // If there are too many files open, try until success or different err
-        if strings.Contains(err.Error(), "too many open files") {
-          goto TooMany
-        }
-				log.Println(err)
-				continue
-			} else if isExec, err := isExecutable(f); err != nil {
-				log.Println(err)
-				continue
-			} else if isExec {
-        f.Close()
-				continue
-			}
-			// Search file, may return lines even with an error
-			linenos, err := searchFile(f)
-			if err != nil {
-				log.Println(err)
-			}
-			f.Close()
-			if len(linenos) != 0 {
-				foundChan <- fmt.Sprintf("%s:%s", fullPath, strings.Join(linenos, ","))
-			}
+      // Search the file
+      searchFile(fullPath, true)
 			continue
-		} else if !flags['c'] {
+		} else if !flags['c'] && !flags['p'] {
 			// If directory entry names
-			if rexpr.MatchString(de.Name()) {
+			if isMatch(de.Name()) {
 				if de.IsDir() {
 					fullPath += "/"
 				}
@@ -212,19 +198,58 @@ TooMany:
 		}
 		if flags['r'] && de.IsDir() {
 			// Start another search if searching recursively
-			nDirs++
-			go searchDir(fullPath, doneChan, false)
+			go searchDir(fullPath)
 		}
 	}
-	// Wait for "searchDir" calls to finish
-	for i := 0; i < nDirs; i++ {
-		<-doneChan
-	}
+}
+
+func searchFile(filepath string, checkIfExec bool) {
+  atomic.AddInt32(&running, 1)
+  defer atomic.AddInt32(&running, -1)
+  f, err := os.Open(filepath)
+  for err != nil {
+    if !strings.Contains(err.Error(), "too many open files") {
+      logf("%v", err)
+      return
+    }
+    f, err = os.Open(filepath)
+  }
+  defer f.Close()
+  if checkIfExec {
+    // Check if the file is an executable
+    if isExec, err := isExecutable(f); err != nil {
+      logf("%v", err)
+      return
+    } else if isExec {
+      return
+    }
+  } else if flags['p'] {
+    // This should only be called with explicit single files
+    // checkIfExec should only be false when not being called from searchDir
+    // i.e., when being called on a single file only
+    writePath := filepath + ".search"
+    if writeFile, err := os.Create(writePath); err != nil {
+      logf("%v", err)
+    } else if err := replaceFileContents(f, writeFile); err != nil {
+      logf("%v", err)
+    } else if err := os.Rename(writePath, filepath); err != nil {
+      logf("%v", err)
+    }
+    return
+  }
+  // Search file
+  linenos, err := searchFileContents(f)
+  if err != nil {
+    logf("%v", err)
+  }
+  if len(linenos) != 0 {
+		foundChan <- fmt.Sprintf("%s:%s", filepath, strings.Join(linenos, ","))
+  }
 }
 
 // Only returns empty slice if no mathces were found before returning (even
 // if an error was encountered)
-func searchFile(f *os.File) (linenos []string, err error) {
+func searchFileContents(f *os.File) (linenos []string, err error) {
 	reader := bufio.NewReader(f)
 	// Loop forever (until reader encounders error)
 	for lineno := 1; true; lineno++ {
@@ -235,15 +260,51 @@ func searchFile(f *os.File) (linenos []string, err error) {
 			}
 			return linenos, nil
 		}
-		if rexpr.MatchString(line) {
+		if isMatch(line) {
 			linenos = append(linenos, fmt.Sprintf("%d", lineno))
 		}
 	}
 	return
 }
 
-// Executable byte order mark
-var executableBOM = [7]byte{127, 67, 76, 70, 2, 1, 1}
+func replaceFileContents(readFile, writeFile *os.File) error {
+  r, w := bufio.NewReader(readFile), bufio.NewWriter(writeFile)
+  /* IDEA: Defer flush */
+  for {
+    line, err := r.ReadString('\n')
+    if err != nil {
+      if err.Error() != "EOF" {
+        return err
+      }
+      return w.Flush()
+    }
+    if _, err := w.WriteString(replace(line)); err != nil {
+      return err
+    }
+  }
+}
+
+func isMatch(text string) bool {
+  return rexpr.MatchString(text)
+}
+
+func replace(text string) string {
+  /* IDEA: Look at ReplaceAllString and ReplaceAllLiteralString */
+  return rexpr.ReplaceAllString(text, *replaceWithPtr)
+}
+
+// Executable byte order mark sequeences
+// Ex) Possible sequences: 127 69 76 70 2 1 1 0 or 127 69 76 70 2 1 1 3
+var executableBOMSeqs = [][]byte{
+  {127},
+  {67, 69},
+  {76},
+  {70},
+  {2},
+  {1},
+  {1},
+  {0, 3},
+}
 
 // Checks where a file is an execuable based on the file's first seven bytes
 func isExecutable(f *os.File) (bool, error) {
@@ -259,15 +320,16 @@ func isExecutable(f *os.File) (bool, error) {
 	if _, err := f.Seek(0, 0); err != nil {
 		return false, err
 	}
-	return bytes.Contains(buf[:], executableBOM[:]), nil
+  for i, b := range buf {
+    if !bytes.Contains(executableBOMSeqs[i], []byte{b}) {
+      return false, nil
+    }
+  }
+	return true, nil
 }
 
-func printHelp(code int) {
-	stmt := "Usage: search {what} {where (optional)} [flags]\n"
-	stmt += "    -c contents\t\tSearch contents of file(s)\n"
-	stmt += "    -r recursive\t\tRecursively search directories\n"
-	stmt += "    -i case-insensitive\t\tCase-insensitive search\n"
-  stmt += "    -s sort results\t\tSort the results\n"
-	log.Print(stmt)
-	os.Exit(code)
+func logf(format string, args ...interface{}) {
+  if !flags['m'] {
+    log.Printf(format, args...)
+  }
 }
