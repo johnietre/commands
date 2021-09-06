@@ -157,10 +157,7 @@ func main() {
 	// Create the file(s)
 	if len(filepaths) == 1 {
 		if err := createFile(filepaths[0], boolFlags); err != nil {
-			log.Println(err)
-      if !strings.HasSuffix(err.Error(), "already exists") {
-        return
-      }
+			log.Fatal(err)
 		}
 		openEditor(editor, filepaths[0])
 	} else if len(filepaths) == 0 {
