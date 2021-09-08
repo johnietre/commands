@@ -7,13 +7,14 @@ import (
 	"os"
 	"os/exec"
 	"path"
+	"runtime"
 	"sort"
 	"strings"
 	"syscall"
 	"text/template"
 )
 
-const tempPath string = "/home/johnierodgers/.commands/start/templates/%s.txt"
+var tempPath string
 
 var exts = map[string]string{
 	".c":  "c",
@@ -32,6 +33,14 @@ var exts = map[string]string{
 
 var scriptFiles = map[string]bool{
 	".pl": true, ".py": true, ".sh": true,
+}
+
+func init() {
+	_, thisFile, _, ok := runtime.Caller(0)
+	if !ok {
+		log.Fatal("error getting template directory")
+	}
+	tempPath = path.Join(path.Dir(thisFile), "templates", "%s.txt")
 }
 
 func main() {
