@@ -99,18 +99,19 @@ func main() {
 		if err := createFile(filepaths[0], boolFlags); err != nil {
 			log.Println(err)
 			if !strings.HasSuffix(err.Error(), "already exists") {
-				return
+        return
 			}
 		}
 		openEditor(editor, filepaths[0])
 	} else if len(filepaths) == 0 {
 		log.Fatal("must specify file(s)")
-	}
-	for _, filepath := range filepaths {
-		if err := createFile(filepath, boolFlags); err != nil {
-			log.Println(err)
-		}
-	}
+	} else {
+	  for _, filepath := range filepaths {
+		  if err := createFile(filepath, boolFlags); err != nil {
+			  log.Println(err)
+		  }
+	  }
+  }
 }
 
 func createFile(filepath string, boolFlags map[string]*bool) error {
@@ -230,6 +231,7 @@ func openEditor(editor, filepath string) {
 			log.Fatal(err)
 		}
 	}
+  os.Exit(0)
 }
 
 func usageFunc() {
