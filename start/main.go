@@ -110,10 +110,11 @@ func main() {
 		openEditor(editor, filepaths[0])
 	} else if len(filepaths) == 0 {
 		log.Fatal("must specify file(s)")
-	}
-	for _, filepath := range filepaths {
-		if err := createFile(filepath, boolFlags); err != nil {
-			log.Println(err)
+	} else {
+		for _, filepath := range filepaths {
+			if err := createFile(filepath, boolFlags); err != nil {
+				log.Println(err)
+			}
 		}
 	}
 }
@@ -235,6 +236,7 @@ func openEditor(editor, filepath string) {
 			log.Fatal(err)
 		}
 	}
+	os.Exit(0)
 }
 
 func usageFunc() {
