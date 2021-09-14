@@ -1,5 +1,10 @@
 package main
 
+/* TODO:
+* Runing "start build.sh" creates the file but also outputs:
+   "build.sh already exists"
+*/
+
 import (
 	"flag"
 	"fmt"

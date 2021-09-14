@@ -13,7 +13,7 @@ func socketServer(hub bool) {
 		printErr(err, true)
 		return
 	}
-  defer ln.Close()
+	defer ln.Close()
 
 	type hubMsg struct{ From, Msg string }
 	var conns sync.Map
