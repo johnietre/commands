@@ -1,9 +1,12 @@
-.PHONY: all aliases pmdr prettypath pwdstore run search sock srvr start uproto
+.PHONY: all aliases daylog pmdr prettypath pwdstore run search sock srvr start uproto
 
-all: aliases pmdr prettypath pwdstore run search sock srvr start uproto
+all: aliases daylog pmdr prettypath pwdstore run search sock srvr start uproto
 
 aliases: bin
 	cp aliases/main.py bin/aliases && chmod u+x bin/aliases
+
+daylog: bin
+	go build -o bin/daylog ./daylog
 
 pmdr: bin
 	g++ pmdr/main.cpp -o bin/pmdr -lpthread -std=gnu++17
