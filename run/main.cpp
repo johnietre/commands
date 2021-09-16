@@ -258,7 +258,7 @@ void printHelp(int exit_code) {
   cout << "-nt\tDo not output compilation and execution time\n";
   cout << "-o {output name}\tThe name of the output executable\n";
   cout << "-r\tRun continuously\n";
-  cout << "-wasm\tCompile given file to web assembly";
+  cout << "-wasm\tCompile given file to web assembly\n";
   cout << "-comp-args {compilation args}\tPass arguments to compiler (must all"
           " be put within a pair of quotes)\n";
   cout << "-exec-args {program args}\tPass arguments to program (must all be"
