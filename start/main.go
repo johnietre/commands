@@ -49,7 +49,7 @@ func init() {
 }
 
 func main() {
-	log.SetFlags(log.Lshortfile)
+	log.SetFlags()
 
 	// Create the flags
 	boolFlags := make(map[string]*bool, 8)
@@ -226,16 +226,16 @@ func createFile(filepath string, boolFlags map[string]*bool) error {
 }
 
 func openEditor(editor, filepath string) {
-  if editor == "atom" && usingWSL() {
-    binPath, err := exec.LookPath("cmd.exe")
-    if err != nil {
-      log.Fatal(err)
-    }
-    err = syscall.Exec(binPath, []string{"cmd.exe", "/C", "atom", filepath}, os.Environ())
-    if err != nil {
-      log.Fatal(err)
-    }
-  } else if editor != "" {
+	if editor == "atom" && usingWSL() {
+		binPath, err := exec.LookPath("cmd.exe")
+		if err != nil {
+			log.Fatal(err)
+		}
+		err = syscall.Exec(binPath, []string{"cmd.exe", "/C", "atom", filepath}, os.Environ())
+		if err != nil {
+			log.Fatal(err)
+		}
+	} else if editor != "" {
 		binPath, err := exec.LookPath(editor)
 		if err != nil {
 			log.Fatal(err)
@@ -271,6 +271,6 @@ func usageFunc() {
 }
 
 func usingWSL() bool {
-  v := os.Getenv("USING_WSL")
-  return v == "1" || v == "on"
+	v := os.Getenv("USING_WSL")
+	return v == "1" || v == "on"
 }
