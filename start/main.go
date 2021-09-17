@@ -49,7 +49,7 @@ func init() {
 }
 
 func main() {
-	log.SetFlags()
+	log.SetFlags(0)
 
 	// Create the flags
 	boolFlags := make(map[string]*bool, 8)
