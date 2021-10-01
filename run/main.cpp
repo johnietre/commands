@@ -286,13 +286,13 @@ int command(string cmd, bool comp) {
       chrono::duration_cast<chrono::duration<double>>(t2 - t1);
   if (comp) {
     if (no_time)
-      cout << '\n';
+      cout << "";
     else
       cout << "\nCompiliation time: " << time_span.count() << " seconds\n";
     return status;
   } else {
     if (no_time)
-      cout << '\n';
+      cout << "";
     else
       cout << "\nExecution time: " << time_span.count() << " seconds\n";
   }
