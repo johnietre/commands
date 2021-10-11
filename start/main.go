@@ -24,7 +24,8 @@ var tempPath string
 var exts = map[string]string{
 	".c":  "c",
 	".cc": "cc", ".cpp": "cc", ".c++": "cc",
-	".f": "f", ".f77": "f", ".f90": "f", ".f95": "f",
+	".erl": "erl",
+	".f":   "f", ".f77": "f", ".f90": "f", ".f95": "f",
 	".go": "go",
 	".h":  "h", ".hpp": "h", ".h++": "h",
 	".htm": "htm", ".html": "htm",
