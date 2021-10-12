@@ -1,9 +1,12 @@
-.PHONY: all aliases daylog pmdr prettypath pwdstore run search sock srvr start uproto
+.PHONY: all aliases articles daylog pmdr prettypath pwdstore run search sock srvr start uproto
 
 all: aliases daylog pmdr prettypath pwdstore run search sock srvr start uproto
 
 aliases: bin
 	cp aliases/main.py bin/aliases && chmod u+x bin/aliases
+
+articles: bin
+	go build -o bin/articles ./articles
 
 daylog: bin
 	go build -o bin/daylog ./daylog
