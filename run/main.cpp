@@ -22,6 +22,8 @@
  * Update flags (ex. use "--" for non-single letter options)
  * Add option to add go env options (like GOOS=js and GO111MODULE=off)
  * Make temp object files in /temp folder
+ * Put temp executables in /temp folder
+ * Allow running program output to be piped
  */
 #include <chrono>
 #include <csignal>

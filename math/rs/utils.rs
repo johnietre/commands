@@ -1,10 +1,32 @@
 use std::io::{self, Write};
+
 pub fn die(msg: &str, code: i32) {
     let stderr = io::stderr();
     let mut handle = stderr.lock();
     handle.write_fmt(format_args!("{}\n", msg))
         .expect("Error dying");
     std::process::exit(code);
+}
+
+pub fn check_parens(expr: &String) {
+    expr
+        .bytes()
+        .enumerate()
+        .filter(|(_, b)| *b == b'(' || *b == b')')
+        .fold(0i32, |acc, (i, b)| {
+            match b {
+                b'(' => acc + 1,
+                _ => if acc == 0 {
+                    die(format!("mismatch parentheses at {}", i+1).as_str(), 1);
+                    -1
+                } else {
+                    acc - 1
+                }
+            }
+        })
+        .is_positive()
+        .then(|| { die("Mismatch parentheses", 1); 0 });
+
 }
 
 pub fn check(expr: &String) {

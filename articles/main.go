@@ -1,12 +1,10 @@
 package main
 
 /* TODO:
-* Search for URL after new and edit article funcs to check if URL already
- exists.
- In new, if exists, offer "replace", "add", and "cancel"
- In edit, if exists, offer "replace", add, and "cancel"
-* Change "Favorite" field to "Fav"
-*/
+ * Change "Favorite" field to "Fav"
+ * Update places where getting user input to use the getline function
+ * Update places where articles are printed to use the toString() method
+ */
 
 import (
 	"bufio"
@@ -25,13 +23,13 @@ import (
 	"golang.org/x/net/html"
 )
 
+// Article holds article information
 type Article struct {
 	Title    string   `json:"title"`
 	URL      string   `json:"url"`
 	Tags     []string `json:"tags"`
 	Read     bool     `json:"read"`
 	Favorite bool     `json:"favorite"`
-	data     []byte
 }
 
 func (a *Article) toString(short bool) string {
@@ -59,8 +57,9 @@ func (a *Article) String() string {
 }
 
 var (
+	titleExpr = regexp.MustCompile(`<title.*?>(.*)</title>`)
+	// For cleaning downloaded HTML
 	scriptExpr = regexp.MustCompile(`<script.*?>.*?</script>`)
-	titleExpr  = regexp.MustCompile(`<title.*?>(.*)</title>`)
 	bodyExpr   = regexp.MustCompile(`<body.*?>`)
 )
 
@@ -148,7 +147,7 @@ func main() {
 		log.Println(err)
 		os.Exit(1)
 	}
-	// Decode the fiel
+	// Decode the file
 	if err := json.NewDecoder(f).Decode(&articles); err != nil && err.Error() != "EOF" {
 		log.Println(err)
 		os.Exit(1)
@@ -180,17 +179,16 @@ func main() {
 
 func newArticle() {
 	var article = new(Article)
-	// Get the URL
+	// Get the article fields
 	getURL(article)
-	// Get the tags
 	getTags(article)
-	// Get if it's read
 	getRead(article)
-	// Get if it's a fav
 	getFav(article)
-	// Do one last check
+	// Try to get the title from the URL
 	if err := article.download(); err != nil {
 		log.Printf("error getting article title: %v", err)
+		// Get the title from the user
+		getTitle(article)
 	}
 	// See if there are any desired changes
 	if !getChanges(article) {
@@ -215,17 +213,50 @@ func printArticles() {
 	/* TODO: Querying titles, urls, read, fav, and tags */
 	/* TODO: Add option for AND and OR querying */
 	var qArticle = new(Article)
+	// These variables tell if a query field has been set (given) or not
 	var setTitle, setURL, setTags, setRead, setFav bool
 QueryLoop:
 	for {
-		/* TODO: Display special message/value if field isn't set */
-		fmt.Println("Fields")
+		// Print the query field
+		const NA = "[Not Set]"
+		fmt.Println("Query Fields")
+		fmt.Print("1) Title: ")
+		if setTitle {
+			fmt.Println(qArticle.Title)
+		} else {
+			fmt.Println(NA)
+		}
+		fmt.Print("2) URL: ")
+		if setURL {
+			fmt.Println(qArticle.URL)
+		} else {
+			fmt.Println(NA)
+		}
+		fmt.Print("3) Tags: ")
+		if setTags {
+			fmt.Println(strings.Join(qArticle.Tags, "|"))
+		} else {
+			fmt.Println(NA)
+		}
+		fmt.Print("4) Read: ")
+		if setRead {
+			fmt.Println(qArticle.Read)
+		} else {
+			fmt.Println(NA)
+		}
+		fmt.Print("5) Favorite: ")
+		if setFav {
+			fmt.Println(qArticle.Favorite)
+		} else {
+			fmt.Println(NA)
+		}
 		fmt.Printf("1) Title: %s\n", qArticle.Title)
 		fmt.Printf("2) URL: %s\n", qArticle.URL)
 		fmt.Printf("3) Tags: %s\n", strings.Join(qArticle.Tags, "|"))
 		fmt.Printf("4) Read: %v\n", qArticle.Read)
 		fmt.Printf("5) Favorite: %v\n", qArticle.Favorite)
 		fmt.Print("Choice (6 = cancel, negative to unset, anything else to finish): ")
+		// Get the choice and perform the appropriate action
 		line, _ := input.ReadString('\n')
 		line = strings.TrimSpace(line)
 		choice, err := strconv.Atoi(line)
@@ -235,13 +266,13 @@ QueryLoop:
 		switch choice {
 		case 1:
 			getTitle(qArticle)
-			setTitle = true
+			setTitle = qArticle.Title != ""
 		case 2:
 			getURL(qArticle)
-			setURL = true
+			setURL = qArticle.URL != ""
 		case 3:
 			getTags(qArticle)
-			setTags = true
+			setTags = len(qArticle.Tags) != 0
 		case 4:
 			getRead(qArticle)
 			setRead = true
@@ -249,19 +280,14 @@ QueryLoop:
 			getFav(qArticle)
 			setFav = true
 		case -1:
-			fmt.Println("Unset Title Field")
 			setTitle = false
 		case -2:
-			fmt.Println("Unset URL Field")
 			setURL = false
 		case -3:
-			fmt.Println("Unset Tags Field")
 			setTags = false
 		case -4:
-			fmt.Println("Unset Read Field")
 			setRead = false
 		case -5:
-			fmt.Println("Unset Fav field")
 			setFav = false
 		case 6:
 			return
@@ -269,16 +295,25 @@ QueryLoop:
 			break QueryLoop
 		}
 	}
+	// Make the query article title lowercase for better searching
+	qArticle.Title = strings.ToLower(qArticle.Title)
 	for i, article := range articles {
 		/* TODO: Use regexp for title, url, and tags? fields */
 		if setTitle {
+			if !strings.Contains(article.Title, qArticle.Title) {
+				continue
+			}
 		}
 		if setURL {
+			if !strings.Contains(article.URL, qArticle.URL) {
+				continue
+			}
 		}
 		if setTags {
 			var match bool
 			for _, tag := range qArticle.Tags {
-				// Short-circcuit; may change!!!
+				// Require exact matches (may change)
+				// Short-circcuit (may change if all matching tags required)
 				if sort.SearchStrings(article.Tags, tag) != -1 {
 					match = true
 					break
@@ -407,6 +442,12 @@ func displayArticles(full bool) {
 	}
 }
 
+func getTitle(article *Article) {
+	fmt.Print("Title: ")
+	line, _ := input.ReadString('\n')
+	article.Title = strings.TrimSpace(line)
+}
+
 func getURL(article *Article) {
 	fmt.Print("URL: ")
 	line, _ := input.ReadString('\n')
@@ -432,12 +473,6 @@ func getFav(article *Article) {
 	line, _ := input.ReadString('\n')
 	line = strings.ToLower(strings.TrimSpace(line))
 	article.Favorite = (line == "yes" || line == "y")
-}
-
-func getTitle(article *Article) {
-	fmt.Print("Title: ")
-	line, _ := input.ReadString('\n')
-	article.Title = strings.TrimSpace(line)
 }
 
 // Returns false if the user canceled

@@ -1,2 +1,2 @@
--module({{.}})
--compile(export_all).
+-module({{.}}).
+-compile([export_all]).

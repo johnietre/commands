@@ -1,20 +1,23 @@
-#![allow(dead_code)]
-fn factorial_recur(i: u128) -> u128 {
-    if i == 1 {
-        return 1;
-    }
-    i * factorial_recur(i-1)
-}
-
-fn factorial(mut i: u128) -> u128 {
-    let mut res = 1u128;
-    while i > 1 {
-        res *= i;
-        i -= 1;
-    }
-    res
-}
-
 fn main() {
-    println!("{}", factorial(30));
+    let iter = vec![1, 2, 3, 4, 5].into_iter();
+    let iter =  iter
+        .filter(|i| {
+            println!("filter1: {}", i);
+            i % 2 == 1
+        });
+    let iter = iter
+        .filter(|i| {
+            println!("filter2: {}", i);
+            *i != 3
+        });
+    let iter = iter
+        .map(|i| {
+            println!("map3: {}", i);
+            i * 10
+        });
+    iter
+        .for_each(|i| {
+            println!("for_each4: {}", i);
+        });
+    //println!("{}", sum);
 }

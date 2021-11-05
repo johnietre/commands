@@ -2,6 +2,7 @@ package main
 
 /* TODO:
  * Use ANSI library to make it so user input is never interrupted by socket output
+ * Ignore all EOF errors
  */
 
 import (

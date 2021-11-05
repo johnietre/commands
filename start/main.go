@@ -1,10 +1,5 @@
 package main
 
-/* TODO:
-* Runing "start build.sh" creates the file but also outputs:
-   "build.sh already exists"
-*/
-
 import (
 	"flag"
 	"fmt"
@@ -154,6 +149,8 @@ func createFile(filepath string, boolFlags map[string]*bool) error {
 	}
 	// Set the replace variable
 	switch filetype {
+  case "erl":
+    replace = name
 	case "f":
 		replace = strings.ToLower(name)
 	case "h":
