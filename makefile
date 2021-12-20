@@ -9,7 +9,9 @@ articles: bin
 	go build -o bin/articles ./articles
 
 daylog: bin
-	go build -o bin/daylog ./daylog
+	ghc daylog/Main.hs -o bin/daylog
+	@rm daylog/Main.o
+	@rm daylog/Main.hi
 
 pmdr: bin
 	g++ pmdr/main.cpp -o bin/pmdr -lpthread -std=gnu++17
