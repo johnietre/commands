@@ -103,6 +103,11 @@ func (a *Article) download() error {
 	return nil
 }
 
+const (
+  articlesDir = ".articles"
+  articlesFile = "articles.json"
+)
+
 var (
 	articles []*Article
 	input    = bufio.NewReader(os.Stdin)
@@ -137,7 +142,7 @@ func main() {
 	fmt.Println()
 
 	// Open the file
-	fileName := path.Join(os.Getenv("HOME"), ".articles.json")
+  fileName := path.Join(os.Getenv("HOME"), articlesDir, articlesFile)
 	f, err := os.OpenFile(
 		fileName,
 		os.O_CREATE|os.O_RDONLY,
