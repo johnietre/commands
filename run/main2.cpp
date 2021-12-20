@@ -62,9 +62,8 @@ map<string, EXT> exts = {
 };
 
 void printHelp(int exit_code = 0);
-void parseArgs(
-int command(string cmd, bool comp = false);
 void parseIncludes();
+int command(string cmd, bool comp = false);
 
 int main(int argc, char *argv[]) {
   // Parse the command-line arguments
