@@ -1,4 +1,4 @@
-.PHONY: all aliases articles daylog pmdr prettypath pwdstore run search sock srvr start uproto
+.PHONY: all aliases articles daylog pmdr prettypath pwdstore run search sock srvr start uproto vocab
 
 all: aliases daylog pmdr prettypath pwdstore run search sock srvr start uproto
 
@@ -39,6 +39,9 @@ start: bin
 
 uproto: bin
 	go build -o bin/uproto ./uproto
+
+vocab: bin
+	go build -o bin/vocab ./vocab
 
 bin:
 	mkdir $@
