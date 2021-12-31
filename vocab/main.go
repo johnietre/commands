@@ -31,34 +31,26 @@ type Definition struct {
 
 var (
   db *sql.DB
+  dbPath string
   inReader = bufio.NewReader(os.Stdin)
 )
 
-func init() {
-  log.SetFlags(0)
-  // Get the "JCMDS_PATH" environment variable and construct the database path
-  // from it
-  dbPath := os.Getenv("JCMDS_PATH")
-  if dbPath == "" {
-    log.Fatal(`"JCMDS_PATH" environment variable not set`)
-  }
-  dbPath = path.Join(dbPath, "vocab", "vocab.db")
+func openDB(filePath string) *sql.DB {
   // Check if the database exists; if not, create it and run the script
   exists := true
-  _, err := os.Stat(dbPath)
-  if err != nil {
+  if _, err := os.Stat(dbPath); err != nil {
     if !errors.Is(err, os.ErrNotExist) {
       log.Fatal(err)
     }
     exists = false
   }
   // Open the database
-  db, err = sql.Open("sqlite3", dbPath)
+  database, err := sql.Open("sqlite3", filePath)
   if err != nil {
     log.Fatal(err)
   }
   // Turn on foreign key support
-  if _, err := db.Exec(`PRAGMA foreign_keys = ON`); err != nil {
+  if _, err := database.Exec(`PRAGMA foreign_keys = ON`); err != nil {
     log.Fatal(err)
   }
   // If the database didn't exist, run the script to create the tables
@@ -71,40 +63,136 @@ func init() {
     if err != nil {
       log.Fatal(err)
     }
-    if _, err := db.Exec(string(scriptBytes)); err != nil {
+    if _, err := database.Exec(string(scriptBytes)); err != nil {
       log.Fatal(err)
     }
   }
+  return database
+}
+
+func init() {
+  log.SetFlags(0)
+  // Get the "JCMDS_PATH" environment variable and construct the database path
+  // from it
+  dbPath = os.Getenv("JCMDS_PATH")
+  if dbPath == "" {
+    log.Fatal(`"JCMDS_PATH" environment variable not set`)
+  }
+  dbPath = path.Join(dbPath, "vocab", "vocab.db")
+  db = openDB(dbPath)
 }
 
 func main() {
-  defer db.Close()
   args := os.Args
   if len(args) == 1 {
-    return
+    printHelp()
   }
   switch args[1] {
   case "add":
-    break
     commandAdd(args[2:])
   case "list":
-    break
     commandList(args[2:])
+  case "quiz":
+    commandQuiz(args[2:])
   case "master":
-    break
     commandMaster(args[2:])
   case "unmaster":
-    break
     commandUnmaster(args[2:])
   case "delete":
-    break
     commandDelete(args[2:])
   case "clear":
     commandClear(args[2:])
+  case "reset":
+    commandReset(args[2:])
   case "help":
     printHelp()
   default:
     log.Printf("unknown command: %s", strings.Join(args[1:], " "))
+    printHelp()
+  }
+  db.Close()
+}
+
+// Adds a definition to a word, adding the word if necessary
+func commandAdd(args []string) {
+  // Get the word and definition from the user
+  var word, def string
+  if len(args) == 0 {
+    word = getWord()
+    def = getDefinition()
+  } else if len(args) == 1 {
+    word = args[0]
+    def = getDefinition()
+  } else if len(args) == 2 {
+    word = args[0]
+    def = args[1]
+  } else {
+    log.Println("invalid command:", strings.Join(args, " "))
+    printHelp()
+  }
+  // Add the word and definition to the database
+  if _, err := db.Exec(`INSERT OR IGNORE INTO words VALUES (?, ?)`, word, 0); err != nil {
+    log.Fatal(err)
+  }
+  if _, err := db.Exec(`INSERT INTO definitions VALUES (?, ?)`, word, def); err != nil {
+    log.Fatal(err)
+  }
+}
+
+// Prints all words or all definitions for a word and whether the word has been
+// mastered or not
+func commandList(args []string) {
+  if len(args) == 0 {
+    // Get the words from the database and print them out
+    rows, err := db.Query(`SELECT * FROM words ORDER BY word`)
+    if err != nil {
+      log.Fatal(err)
+    }
+    defer rows.Close()
+    word, mastered, empty := "", 0, true
+    for rows.Next() {
+      empty = false
+      if err := rows.Scan(&word, &mastered); err != nil {
+        log.Fatal(err)
+      }
+      if mastered == 1 {
+        word += " ✓"
+      }
+      fmt.Println(word)
+    }
+    if empty {
+      log.Fatal("no words")
+    }
+  } else if len(args) == 1 {
+    // Get whether the given word is mastered or not, if it exists
+    word := args[0]
+    row := db.QueryRow(`SELECT mastered FROM words WHERE word=?`, word)
+    mastered := 0
+    if err := row.Scan(&mastered); err != nil {
+      if errors.Is(err, sql.ErrNoRows) {
+        log.Fatal("word doesn't exist")
+      }
+      log.Fatal(err)
+    }
+    // Get the definitions of the word and print the out
+    rows, err := db.Query(`SELECT definition FROM definitions WHERE word=?`, word)
+    if err != nil {
+      log.Fatal(err)
+    }
+    defer rows.Close()
+    if mastered == 1 {
+      word += " ✓"
+    }
+    fmt.Println(word)
+    def := ""
+    for rows.Next() {
+      if err := rows.Scan(&def); err != nil {
+        log.Fatal(err)
+      }
+      fmt.Printf("    %s\n", def)
+    }
+  } else {
+    log.Println("invalid command:", strings.Join(args, " "))
     printHelp()
   }
 }
@@ -112,7 +200,11 @@ func main() {
 // Picks a random word, a random definition for that word, and three other
 // random words and random definitions for each of them and presents the four
 // definitions to the user
-func randomChoices() {
+func commandQuiz(args []string) {
+  if len(args) != 0 {
+    log.Println("invalid command:", strings.Join(args, " "))
+    printHelp()
+  }
   // Set the random seed
   rand.Seed(time.Now().Unix())
   // Get the random word which is to be the correct choice
@@ -121,7 +213,7 @@ func randomChoices() {
   if err != nil {
     log.Fatal(err)
   }
-  words := make([]string, 1)
+  words := make([]string, 0)
   for rows.Next() {
     word := ""
     if err := rows.Scan(&word); err != nil {
@@ -140,7 +232,7 @@ func randomChoices() {
   if err != nil {
     log.Fatal(err)
   }
-  wordDefs := make([]string, 1)
+  wordDefs := make([]string, 0)
   for rows.Next() {
     def := ""
     if err := rows.Scan(&def); err != nil {
@@ -199,97 +291,14 @@ func randomChoices() {
   // The possible error is irrelevant because the default returned integer 0 is
   // an invalid choice and would be handled the same as a non-nil error
   choice, _ := strconv.Atoi(getLine("Choice: "))
-  if choice > 4 || choice < 1 {
+  choice--
+  if choice > 3 || choice < 0 {
     fmt.Println("invalid choice")
   } else if choice != correctIndex {
     fmt.Printf("INCORRECT, that definition is for: %s\n", choices[choice][0])
+    fmt.Printf("The answer is: %d) %s\n", correctIndex+1, correctDef)
   } else {
     fmt.Println("CORRECT!!!")
-  }
-  fmt.Printf("The answer is: %s", randomWord)
-}
-
-// Adds a definition to a word, adding the word if necessary
-func commandAdd(args []string) {
-  // Get the word and definition from the user
-  var word, def string
-  if len(args) == 0 {
-    word = getWord()
-    def = getDefinition()
-  } else if len(args) == 1 {
-    word = args[0]
-    def = getDefinition()
-  } else if len(args) == 2 {
-    word = args[0]
-    def = args[1]
-  } else {
-    log.Println("invalid command:", strings.Join(args, " "))
-    printHelp()
-  }
-  // Add the word and definition to the database
-  if _, err := db.Exec(`INSERT OR IGNORE INTO words VALUES (?, ?)`, word, 0); err != nil {
-    log.Fatal(err)
-  }
-  if _, err := db.Exec(`INSERT INTO definitions VALUES (?, ?)`, word, def); err != nil {
-    log.Fatal(err)
-  }
-}
-
-// Prints all words or all definitions for a word and whether the word has been
-// mastered or not
-func commandList(args []string) {
-  if len(args) == 0 {
-    // Get the words from the database and print them out
-    rows, err := db.Query(`SELECT * FROM words`)
-    if err != nil {
-      log.Fatal(err)
-    }
-    defer rows.Close()
-    word, mastered, empty := "", 0, true
-    for rows.Next() {
-      empty = false
-      if err := rows.Scan(&word, &mastered); err != nil {
-        log.Fatal(err)
-      }
-      if mastered == 1 {
-        word += " ✓"
-      }
-      fmt.Println(word)
-    }
-    if empty {
-      log.Fatal("no words")
-    }
-  } else if len(args) == 1 {
-    // Get whether the given word is mastered or not, if it exists
-    word := args[0]
-    row := db.QueryRow(`SELECT mastered FROM words WHERE word=?`, word)
-    mastered := 0
-    if err := row.Scan(&mastered); err != nil {
-      if errors.Is(err, sql.ErrNoRows) {
-        log.Fatal("word doesn't exist")
-      }
-      log.Fatal(err)
-    }
-    // Get the definitions of the word and print the out
-    rows, err := db.Query(`SELECT definition FROM definitions WHERE word=?`, word)
-    if err != nil {
-      log.Fatal(err)
-    }
-    defer rows.Close()
-    if mastered == 1 {
-      word += " ✓"
-    }
-    fmt.Println(word)
-    def := ""
-    for rows.Next() {
-      if err := rows.Scan(&def); err != nil {
-        log.Fatal(err)
-      }
-      fmt.Printf("    %s\n", def)
-    }
-  } else {
-    log.Println("invalid command:", strings.Join(args, " "))
-    printHelp()
   }
 }
 
@@ -355,7 +364,7 @@ func commandDelete(args []string) {
   }
   if def == "" {
     // If desired, list the definitions out for the user
-    choice := getLine("Delete whole word and all its definitions? [Y/n] ");
+    choice := getLine("Delete the whole word and all its definitions? [Y/n] ");
     if strings.ToLower(choice) == "y" {
       // Delete the word and all its definitions
       if _, err := db.Exec(`DELETE FROM words WHERE word=?`, word); err != nil {
@@ -370,7 +379,7 @@ func commandDelete(args []string) {
     }
     defer rows.Close()
     count := 0
-    defs := make([]string, 1)
+    var defs []string
     for rows.Next() {
       count++
       if err := rows.Scan(&def); err != nil {
@@ -388,12 +397,28 @@ func commandDelete(args []string) {
     n, err := strconv.Atoi(getLine("Choice: "))
     // Here, there error must be checked since 0 (the default 'n' returned) is
     // a valid option
-    if err != nil || n >= count || n < -1 {
+    if err != nil || n > count || n < -1 {
       log.Fatal("invalid choice")
+    }
+    if n == -1 {
+      return
+    } else if n == 0 {
+      if _, err := db.Exec(`DELETE FROM words WHERE word=?`, word); err != nil {
+        log.Fatal(err)
+      }
+      return
     }
     // Delete the definition
     if _, err := db.Exec(`DELETE FROM definitions WHERE definition=?`, defs[n-1]); err != nil {
       log.Fatal(err)
+    }
+    // Check to see if all definitions for the word have been deleted
+    // If so, delete the word from the words table
+    row := db.QueryRow(`SELECT definition FROM definitions WHERE word=?`, word)
+    if err := row.Scan(&def); err != nil && errors.Is(err, sql.ErrNoRows) {
+      if _, err := db.Exec(`DELETE FROM words WHERE word=?`, word); err != nil {
+        log.Fatal(err)
+      }
     }
   }
 }
@@ -413,9 +438,37 @@ func commandClear(args []string) {
   }
 }
 
+// Clears all words and definitions from the database
+func commandReset(args []string) {
+  if len(args) != 0 {
+    log.Println("invalid command:", strings.Join(args, " "))
+    printHelp()
+  }
+  // Get confirmation
+  choice := getLine("Reset all data? [Y/n] ")
+  if strings.ToLower(choice) == "y" {
+    db.Close()
+    if err := os.Remove(dbPath); err != nil {
+      log.Fatal(err)
+    }
+    db = openDB(dbPath)
+  }
+}
+
 // Prints the help screen
 func printHelp() {
-  // TODO
+  format := "    %-28s%s\n"
+  fmt.Println("Vocab is a program for quizzing vocabulary words")
+  fmt.Println("\t\tUsage: vocab [command]")
+  fmt.Printf(format, "add [word [definition]]", "Add a definition")
+  fmt.Printf(format, "list [word]", "List all words or definitions of a word")
+  fmt.Printf(format, "quiz", "Quiz on a random word")
+  fmt.Printf(format, "master [word]", "Mark a word as mastered (won't be show up in quizzes)")
+  fmt.Printf(format, "unmaster [word]", `Mark a word as "unmastered"`)
+  fmt.Printf(format, "delete [word [definition]]", "Delete a word or definition")
+  fmt.Printf(format, "clear", "Delete all words")
+  fmt.Printf(format, "reset", "Resets all program data")
+  fmt.Printf(format, "help", "Print help")
   os.Exit(0)
 }
 
@@ -430,7 +483,7 @@ func getWord() string {
 
 // Gets a definition, exitting if the definition is empty
 func getDefinition() string {
-  def := getLine("Word: ")
+  def := getLine("Definition: ")
   if def == "" {
     log.Fatal("must input definition")
   }
