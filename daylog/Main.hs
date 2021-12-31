@@ -1,12 +1,14 @@
+-- TODO: "add at" and "add on" commands
 import           Data.Char             (toUpper)
 import           Data.List             (delete, elemIndex)
 import           Data.Maybe            (fromMaybe)
-import           Data.Time.Clock       (UTCTime, addUTCTime)
+import           Data.Time.Clock       (UTCTime, addUTCTime, getCurrentTime)
 import           Data.Time.Clock.POSIX (POSIXTime, posixSecondsToUTCTime)
 import           Data.Time.Format      (defaultTimeLocale, formatTime,
                                         parseTimeM)
-import           Data.Time.LocalTime   (LocalTime, TimeZone, getCurrentTimeZone,
-                                        localTimeToUTC, utcToLocalTime)
+import           Data.Time.LocalTime   (LocalTime (localTimeOfDay), TimeZone,
+                                        getCurrentTimeZone, localTimeToUTC,
+                                        midnight, utcToLocalTime)
 import           System.Directory      (removeFile, renameFile)
 import           System.Environment    (getArgs, lookupEnv)
 import           System.Exit           (die)
@@ -220,13 +222,17 @@ readLogLines path = do
   if null contents then die "No logs" else return $ lines contents
 
 parseLocalDay :: DayString -> IO LocalTime
--- parseLocalDay "today" =
+parseLocalDay "today" = do
+  utc <- getCurrentTime
+  tz <- getCurrentTimeZone
+  let local = utcToLocalTime tz utc
+  return $ local{localTimeOfDay=midnight}
 parseLocalDay dayStr = case parseTimeM True defaultTimeLocale "%m/%d/%Y" dayStr :: Maybe LocalTime of
   Just t  -> return t
   Nothing -> die "Invalid time format, expects mm/dd/YYYY"
 
 parseLocalTime :: TimeString -> IO LocalTime
--- parseLocalTime "today" =
+parseLocalTime "today" = parseLocalDay "today"
 parseLocalTime timeStr = case parseTimeM True defaultTimeLocale "%H:%M %m/%d/%Y" timeStr :: Maybe LocalTime of
   Just t  -> return t
   Nothing -> die "Invalid time format, expects HH:MM mm/dd/YYYY"
