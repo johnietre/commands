@@ -11,6 +11,7 @@ import (
 	"bytes"
 	"flag"
 	"fmt"
+  "io"
 	"io/ioutil"
 	"log"
 	"os"
@@ -50,6 +51,7 @@ func main() {
 	flagSet.Bool("m", false, "Mute non-fatal errors")
 	flagSet.Bool("n", false, "Count the number of occurrences")
 	flagSet.Bool("x", false, "Use regex")
+  flagSet.Bool("l", false, "Print line numbers of occurrences")
 	replaceWithPtr = flagSet.String("p", "", "String to replace the \"what\" with")
 	flagSet.Usage = func() {
 		fmt.Fprintf(
@@ -107,12 +109,16 @@ func main() {
 		log.Fatal(err)
 	}
 
+  if flags['m'] {
+    log.SetOutput(io.Discard)
+  }
+
 	// Loop through the "wheres"
 	for _, where := range wheres {
 		// Check to make sure the "where" exists
 		fstat, err := os.Stat(where)
 		if err != nil {
-			logf("%v", err)
+			log.Printf("%v", err)
 			continue
 		}
 		if mode := fstat.Mode(); mode.IsRegular() {
@@ -171,7 +177,7 @@ func searchDir(dirPath string) {
 			entries, err = ioutil.ReadDir(dirPath)
 			continue
 		}
-		logf("%v", err)
+		log.Printf("%v", err)
 		return
 	}
 	for _, de := range entries {
@@ -210,7 +216,7 @@ func searchFile(filepath string, checkIfExec bool) {
 	f, err := os.Open(filepath)
 	for err != nil {
 		if !strings.Contains(err.Error(), "too many open files") {
-			logf("%v", err)
+			log.Printf("%v", err)
 			return
 		}
 		f, err = os.Open(filepath)
@@ -219,7 +225,7 @@ func searchFile(filepath string, checkIfExec bool) {
 	if checkIfExec {
 		// Check if the file is an executable
 		if isExec, err := isExecutable(f); err != nil {
-			logf("%v", err)
+			log.Printf("%v", err)
 			return
 		} else if isExec {
 			return
@@ -230,39 +236,47 @@ func searchFile(filepath string, checkIfExec bool) {
 		// i.e., when being called on a single file only
 		writePath := filepath + ".search"
 		if writeFile, err := os.Create(writePath); err != nil {
-			logf("%v", err)
+			log.Printf("%v", err)
 		} else if err := replaceFileContents(f, writeFile); err != nil {
-			logf("%v", err)
+			log.Printf("%v", err)
 		} else if err := os.Rename(writePath, filepath); err != nil {
-			logf("%v", err)
+			log.Printf("%v", err)
 		}
 		return
 	}
 	// Search file
 	linenos, err := searchFileContents(f)
 	if err != nil {
-		logf("%v", err)
+		log.Printf("%v", err)
 	}
 	if len(linenos) != 0 {
-		foundChan <- fmt.Sprintf("%s:%s", filepath, strings.Join(linenos, ","))
+    if flags['l'] {
+		  foundChan <- fmt.Sprintf("%s:%s", filepath, strings.Join(linenos, ","))
+    } else {
+		  foundChan <- fmt.Sprintf("%s", filepath)
+    }
 	}
 }
 
 // Only returns empty slice if no mathces were found before returning (even
 // if an error was encountered)
 func searchFileContents(f *os.File) (linenos []string, err error) {
-	reader := bufio.NewReader(f)
+	reader, line := bufio.NewReader(f), ""
 	// Loop forever (until reader encounders error)
 	for lineno := 1; true; lineno++ {
-		line, err := reader.ReadString('\n')
+		line, err = reader.ReadString('\n')
 		if err != nil {
 			if err.Error() != "EOF" {
-				return linenos, err
+				return
 			}
-			return linenos, nil
+      err = nil
+			return
 		}
 		if isMatch(line) {
 			linenos = append(linenos, fmt.Sprintf("%d", lineno))
+      if !flags['l'] {
+        return
+      }
 		}
 	}
 	return
@@ -327,10 +341,4 @@ func isExecutable(f *os.File) (bool, error) {
 		}
 	}
 	return true, nil
-}
-
-func logf(format string, args ...interface{}) {
-	if !flags['m'] {
-		log.Printf(format, args...)
-	}
 }
