@@ -1,4 +1,4 @@
-.PHONY: all aliases articles daylog pmdr prettypath pwdstore run search sock srvr start uproto vocab
+.PHONY: all aliases articles daylog dotodo pmdr prettypath pwdstore run search sock srvr start uproto vocab
 
 all: aliases daylog pmdr prettypath pwdstore run search sock srvr start uproto
 
@@ -7,6 +7,9 @@ aliases: bin
 
 articles: bin
 	go build -o bin/articles ./articles
+
+dotodo: bin
+	cp dotodo/main.py bin/dotodo && chmod u+x bin/dotodo
 
 daylog: bin
 	ghc daylog/Main.hs -o bin/daylog
