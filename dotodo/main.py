@@ -1,6 +1,8 @@
 #!/usr/bin/env python3
+# TODO: Implement unimplemented items (from help printout)
+# TODO: Allow item and time to be passed through the command line program call
 import sqlite3, os, sys
-from datetime import datetime
+from datetime import datetime, timedelta
 from dateutil import parser
 from pathlib import Path
 
@@ -33,17 +35,27 @@ def main():
     args = sys.argv[1:]
     if len(args) == 0: help_command()
     cmd = args[0]
-    if cmd not in commands: help_command(args)
     if cmd == "reset": reset_command(path)
-    commands[cmd](conn_cur, args[1:])
+    elif cmd == "version": version_command()
+    elif cmd not in commands: help_command(args)
+    else: commands[cmd](conn_cur, args[1:])
     conn.close()
 
 def add_command(conn_cur, args):
     if len(args) != 0: help_command(args)
     what = input("Item: ")
-    time = input("Time: ")
-    try: time = int(parser.parse(time).timestamp())
-    except Exception as e: die(e)
+    time = input("Time: ").lower()
+    if time == "today":
+        today = datetime.now().date()
+        time = datetime(today.year, today.month, today.day, 23, 59, 59)
+        time = int(time.timestamp())
+    elif time == "tomorrow":
+        today = datetime.now().date() + timedelta(1)
+        time = datetime(today.year, today.month, today.day, 23, 59, 59)
+        time = int(time.timestamp())
+    else:
+        try: time = int(parser.parse(time).timestamp())
+        except Exception as e: die(e)
     with conn_cur[0]:
         stmt = "INSERT INTO items VALUES (?,?,?)"
         conn_cur[0].execute(stmt, (what, time, 0))
@@ -220,6 +232,9 @@ def reset_command(path):
     if choice != 'y': return
     os.remove(path)
 
+def version_command():
+    print("versionless")
+
 def help_command(*args):
     if len(args) != 0:
         arg = args[0]
@@ -228,20 +243,27 @@ def help_command(*args):
         elif type(arg) == list:
             print(f"unknown command(s): {' '.join(arg)}")
     print("Usage: dotodo <command> [subcommands]")
-    print("    add\t\t\tAdds an task")
+    print('    add\t\t\tAdds an task ("today" or "tomorrow" can be given as the time)')
     print("    list\t\tLists all uncompleted tasks")
     print("\tlate\t\tLists all past-due uncompleted tasks")
     print("\tcompleted\tLists all completed tasks")
     print("\tall\t\tLists all tasks")
     print("    delete")
     print("\tcompleted\tDeletes a completed task")
-    print("\tuncompleted\tDeletes a uncompleted task")
+    print("\tuncompleted\tDeletes an uncompleted task")
     print("    clear")
     print("\tcompleted\tClears all completed tasks")
     print("\tuncompleted\tClears all uncompleted tasks")
     print("\tall\t\tClears all tasks")
+    print("    reset\t\tResets the program")
+    print("    version\t\tPrints dotodo version")
     print("    help\t\tPrints help screen")
-    print("    reset\tResets the program")
+    print()
+    print('Commands can be applied for a specific date by adding "for [date]" after it')
+    print('Commands can be applied to before a specific date/time by adding "before [date/time]" after it')
+    print('Commands can be applied to after a specific date/time by adding "after [date/time]" after it')
+    print('Commands can be applied to between specific dates/times by adding "between [start date/time] [end date/time]" after it')
+    print("These have yet to be implemented!")
     sys.exit(1)
 
 def print_items(items):
