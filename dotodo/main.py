@@ -55,10 +55,13 @@ def list_command(conn_cur, args):
         "all": list_all_command,
     }
     if len(args) == 0:
+        now = datetime.now()
         query = f"SELECT item,time FROM items WHERE completed=0 ORDER BY time"
         items = conn_cur[1].execute(query).fetchall()
         if len(items) == 0: die("no items todo", exit_code=0)
-        print_items(items)
+        for (item, time) in items:
+            x = "" if datetime.fromtimestamp(time) > now else chr(0x274C) + " "
+            print(f"{x}{timestring(time)} | {item}")
         return
     cmd = args[0]
     if cmd not in commands: help_command(args)
@@ -81,12 +84,15 @@ def list_completed_command(conn_cur, args):
 
 def list_all_command(conn_cur, args):
     if len(args) != 0: help_command(args)
+    now = datetime.now()
     query = f"SELECT item,time,completed FROM items ORDER BY time"
     items = conn_cur[1].execute(query).fetchall()
     if len(items) == 0: die("no items", exit_code=0)
     for (item, time, completed) in items:
-        checkmark = chr(0x2705)+" " if completed == 1 else ""
-        print(f"{checkmark}{timestring(time)} | {item}")
+        mark = ""
+        if completed == 1: mark = chr(0x2705) + " "
+        elif datetime.fromtimestamp(time) <= now: mark = chr(0x274C) + " "
+        print(f"{mark}{timestring(time)} | {item}")
 
 def complete_command(conn_cur, args):
     if len(args) != 0: help_command(args)
