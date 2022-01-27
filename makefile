@@ -17,7 +17,7 @@ daylog: bin
 	@rm daylog/Main.hi
 
 pmdr: bin
-	g++ pmdr/main.cpp -o bin/pmdr -lpthread -std=gnu++17
+	g++ pmdr/main.cpp -Wall -o bin/pmdr -lpthread -std=gnu++17
 
 prettypath: bin
 	cp prettypath/main.py bin/prettypath && chmod u+x bin/prettypath
@@ -26,7 +26,7 @@ pwdstore: bin
 	go build -o bin/pwdstore ./pwdstore
 
 run: bin
-	g++ run/main.cpp -o bin/run -std=gnu++17
+	g++ run/main.cpp -Wall -o bin/run -std=gnu++17
 
 search: bin
 	go build -o bin/search ./search

@@ -1,26 +1,32 @@
 #![allow(dead_code)]
+use std::cell::RefCell;
 use std::collections::HashMap;
-use std::ptr::NonNull;
+use std::rc::Rc;
 
-#[derive(Clone)]
-pub struct Flag<T: Clone> {
-    pub short_name: String,
-    pub long_name: String,
-    pub value: T,
+type RcArg<T> = Rc<RefCell<Arg<T>>>;
+
+#[derive(Clone, Default)]
+pub struct Arg<T: Clone + Default> {
+    name: String,
+    short_name: char,
+    val: T,
     set: bool,
 }
 
-impl<T> Flag<T>
-where
-    T: Clone,
-{
-    pub fn new<S: ToString>(short_name: S, long_name: S, value: T) -> Self {
+impl<T: Clone + Default> Arg<T> {
+    pub fn new<S: ToString>(name: S) -> Self {
         Self {
-            value,
-            short_name: short_name.to_string(),
-            long_name: long_name.to_string(),
-            set: false,
+            name: name.to_string(),
+            ..Default::default()
         }
+    }
+
+    pub fn short(self, short_name: char) -> Self {
+        Self { short_name, ..self }
+    }
+
+    pub fn value(self, val: T) -> Self {
+        Self { val, ..self }
     }
 
     pub fn is_set(&self) -> bool {
@@ -28,77 +34,116 @@ where
     }
 }
 
-enum FlagType {
+impl<T: Clone + Default> Into<RcArg<T>> for Arg<T> {
+    fn into(self) -> RcArg<T> {
+        Rc::new(RefCell::new(self))
+    }
+}
+
+enum ArgType {
     Int,
     Float,
     Bool,
     Str,
 }
 
-pub struct FlagParser {
-    flags: HashMap<String, FlagType>,
-    int_flags: HashMap<String, NonNull<Flag<i32>>>,
-    float_flags: HashMap<String, NonNull<Flag<f64>>>,
-    bool_flags: HashMap<String, NonNull<Flag<bool>>>,
-    string_flags: HashMap<String, NonNull<Flag<String>>>,
-    other_flags: HashMap<String, NonNull<Flag<String>>>,
-    other_args: Vec<String>,
+pub struct ArgParser {
+    arg_types: HashMap<String, ArgType>,
+    short_arg_types: HashMap<String, ArgType>,
+
+    int_args: HashMap<String, RcArg<i32>>,
+    float_args: HashMap<String, RcArg<f64>>,
+    bool_args: HashMap<String, RcArg<bool>>,
+    string_args: HashMap<String, RcArg<String>>,
+
+    short_int_args: HashMap<String, RcArg<i32>>,
+    short_float_args: HashMap<String, RcArg<f64>>,
+    short_bool_args: HashMap<String, RcArg<bool>>,
+    short_string_args: HashMap<String, RcArg<String>>,
+
+    other_args: HashMap<String, RcArg<String>>,
+    values: Vec<String>,
+
+    exit_on_error: bool
 }
 
-impl FlagParser {
+impl ArgParser {
     pub fn new() -> Self {
         Self {
-            flags: HashMap::new(),
-            int_flags: HashMap::new(),
-            float_flags: HashMap::new(),
-            bool_flags: HashMap::new(),
-            string_flags: HashMap::new(),
-            other_flags: HashMap::new(),
-            other_args: Vec::new(),
+            arg_types: HashMap::new(),
+            short_arg_types: HashMap::new(),
+            int_args: HashMap::new(),
+            float_args: HashMap::new(),
+            bool_args: HashMap::new(),
+            string_args: HashMap::new(),
+            short_int_args: HashMap::new(),
+            short_float_args: HashMap::new(),
+            short_bool_args: HashMap::new(),
+            short_string_args: HashMap::new(),
+            other_args: HashMap::new(),
+            values: Vec::new(),
+            exit_on_error: false,
         }
     }
 
-    pub fn add_int_flag(mut self, flag: Flag<i32>) -> Self {
-        let (short, long) = (flag.short_name.clone(), flag.long_name.clone());
-        self.flags.insert(short.clone(), FlagType::Int);
-        self.flags.insert(long.clone(), FlagType::Int);
-        let flag = NonNull::new(Box::leak(Box::new(flag))).unwrap();
-        self.int_flags.insert(short, flag);
-        self.int_flags.insert(long, flag);
+    pub fn add_int_arg(mut self, arg: Arg<i32>) -> Self {
+        let name = "--".to_string() + &arg.name;
+        let short = "-".to_string() + &arg.short_name.to_string();
+        let rc_arg = arg.into();
+        self.arg_types.insert(name.clone(), ArgType::Int);
+        self.int_args.insert(name, Rc::clone(&rc_arg));
+        if short != "-" {
+            self.short_arg_types.insert(short.clone(), ArgType::Int);
+            self.short_int_args.insert(short, Rc::clone(&rc_arg));
+        }
         self
     }
 
-    pub fn add_float_flag(mut self, flag: Flag<f64>) -> Self {
-        let (short, long) = (flag.short_name.clone(), flag.long_name.clone());
-        self.flags.insert(short.clone(), FlagType::Float);
-        self.flags.insert(long.clone(), FlagType::Float);
-        let flag = NonNull::new(Box::leak(Box::new(flag))).unwrap();
-        self.float_flags.insert(short, flag);
-        self.float_flags.insert(long, flag);
+    pub fn add_float_arg(mut self, arg: Arg<f64>) -> Self {
+        let name = "--".to_string() + &arg.name;
+        let short = "-".to_string() + &arg.short_name.to_string();
+        let rc_arg = arg.into();
+        self.arg_types.insert(name.clone(), ArgType::Float);
+        self.float_args.insert(name, Rc::clone(&rc_arg));
+        if short != "-" {
+            self.short_arg_types.insert(short.clone(), ArgType::Float);
+            self.short_float_args.insert(short, Rc::clone(&rc_arg));
+        }
         self
     }
 
-    pub fn add_bool_flag(mut self, flag: Flag<bool>) -> Self {
-        let (short, long) = (flag.short_name.clone(), flag.long_name.clone());
-        self.flags.insert(short.clone(), FlagType::Bool);
-        self.flags.insert(long.clone(), FlagType::Bool);
-        let flag = NonNull::new(Box::leak(Box::new(flag))).unwrap();
-        self.bool_flags.insert(short, flag);
-        self.bool_flags.insert(long, flag);
+    pub fn add_bool_arg(mut self, arg: Arg<bool>) -> Self {
+        let name = "--".to_string() + &arg.name;
+        let short = "-".to_string() + &arg.short_name.to_string();
+        let rc_arg = arg.into();
+        self.arg_types.insert(name.clone(), ArgType::Bool);
+        self.bool_args.insert(name, Rc::clone(&rc_arg));
+        if short != "-" {
+            self.short_arg_types.insert(short.clone(), ArgType::Bool);
+            self.short_bool_args.insert(short, Rc::clone(&rc_arg));
+        }
         self
     }
 
-    pub fn add_string_flag(mut self, flag: Flag<String>) -> Self {
-        let (short, long) = (flag.short_name.clone(), flag.long_name.clone());
-        self.flags.insert(short.clone(), FlagType::Str);
-        self.flags.insert(long.clone(), FlagType::Str);
-        let flag = NonNull::new(Box::leak(Box::new(flag))).unwrap();
-        self.string_flags.insert(short, flag);
-        self.string_flags.insert(long, flag);
+    pub fn add_string_arg(mut self, arg: Arg<String>) -> Self {
+        let name = "--".to_string() + &arg.name;
+        let short = "-".to_string() + &arg.short_name.to_string();
+        let rc_arg = arg.into();
+        self.arg_types.insert(name.clone(), ArgType::Str);
+        self.string_args.insert(name, Rc::clone(&rc_arg));
+        if short != "-" {
+            self.short_arg_types.insert(short.clone(), ArgType::Str);
+            self.short_string_args.insert(short, Rc::clone(&rc_arg));
+        }
         self
+    }
+
+    pub fn exit_on_error(self, exit_on_error: bool) -> Self {
+        Self { exit_on_error, ..self }
     }
 
     pub fn parse(mut self, args: Vec<String>) -> Self {
+        use self::ArgType;
         let mut bools: HashMap<&str, bool> = HashMap::new();
         bools.insert("t", true);
         bools.insert("T", true);
@@ -111,175 +156,83 @@ impl FlagParser {
 
         let mut iter = args.into_iter();
         while let Some(mut arg) = iter.next() {
-            if arg.starts_with("-") {
-                arg.remove(0);
-                let parts = arg.split_once("=");
-                match self.flags.get(&arg) {
-                    Some(FlagType::Int) => match parts {
-                        Some((flag, i)) => unsafe {
-                            let i: i32 = i.parse().unwrap();
-                            let mut fl = self.int_flags.get_mut(flag).unwrap().as_mut();
-                            fl.set = true;
-                            fl.value = i;
-                        },
-                        None => match iter.next() {
-                            Some(i) => unsafe {
-                                let i: i32 = i.parse().unwrap();
-                                let fl = self.int_flags.get_mut(&arg).unwrap().as_mut();
-                                fl.set = true;
-                                fl.value = i;
-                            },
-                            None => {
-                                self.other_args.push(arg);
-                            }
-                        },
-                    },
-                    Some(FlagType::Float) => match parts {
-                        Some((flag, f)) => unsafe {
-                            let f: f64 = f.parse().unwrap();
-                            let fl = self.float_flags.get_mut(flag).unwrap().as_mut();
-                            fl.set = true;
-                            fl.value = f;
-                        },
-                        None => match iter.next() {
-                            Some(f) => unsafe {
-                                let f: f64 = f.parse().unwrap();
-                                let fl = self.float_flags.get_mut(&arg).unwrap().as_mut();
-                                fl.set = true;
-                                fl.value = f;
-                            },
-                            None => {
-                                self.other_args.push(arg);
-                            }
-                        },
-                    },
-                    Some(FlagType::Bool) => match parts {
-                        Some((flag, b)) => unsafe {
-                            let b = *bools.get(&b).unwrap();
-                            let fl = self.bool_flags.get_mut(flag).unwrap().as_mut();
-                            fl.set = true;
-                            fl.value = b;
-                        },
-                        None => unsafe {
-                            let fl = self.bool_flags.get_mut(&arg).unwrap().as_mut();
-                            fl.set = true;
-                            fl.value = true;
-                        },
-                    },
-                    Some(FlagType::Str) => match parts {
-                        Some((flag, s)) => unsafe {
-                            let fl = self.string_flags.get_mut(flag).unwrap().as_mut();
-                            fl.set = true;
-                            fl.value = s.to_owned();
-                        },
-                        None => match iter.next() {
-                            Some(s) => unsafe {
-                                let fl = self.string_flags.get_mut(&arg).unwrap().as_mut();
-                                fl.set = true;
-                                fl.value = s;
-                            },
-                            None => {
-                                self.other_args.push(arg);
-                            }
-                        },
-                    },
-                    None => match iter.next() {
-                        Some(value) => {
-                            let count = arg.bytes().take_while(|&b| b == b'-').count();
-                            let mut fl = if count == 1 {
-                                Flag::new(arg.clone(), String::new(), value)
-                            } else {
-                                Flag::new(String::new(), arg.clone(), value)
-                            };
-                            fl.set = true;
-                            self.other_flags.insert(arg, Box::leak(Box::new(fl)).into());
-                        }
-                        None => {
-                            self.other_args.push(arg);
-                        }
-                    },
+            if arg.starts_with("--") {
+                //
+            } else if arg.starts_with("-") {
+                let has_value;
+                let (short, value) = if let Some((s, v)) = arg.split_once("=") {
+                    has_value = true;
+                    (s.to_string(), v.to_string())
+                } else {
+                    has_value = false;
+                    (arg.clone(), String::new())
+                };
+                match self.short_arg_types.get(&short) {
+                    Some(Int) => (),
+                    Some(Float) => (),
+                    Some(Bool) => (),
+                    Some(Str) => (),
+                    None => self.values.push(arg),
                 }
             } else {
-                self.other_args.push(arg);
+                self.values.push(arg);
             }
         }
         self
     }
 
-    pub fn get_int_flag(&self, flag: &String) -> Option<&Flag<i32>> {
-        self.int_flags.get(flag).map(|f| unsafe { f.as_ref() })
+    pub fn get_int_arg(&self, arg: &String) -> Option<&Arg<i32>> {
+        self.int_args.get(arg).map(|a| &*a.borrow())
     }
 
-    pub fn get_float_flag(&self, flag: &String) -> Option<&Flag<f64>> {
-        self.float_flags.get(flag).map(|f| unsafe { f.as_ref() })
+    pub fn get_float_arg(&self, arg: &String) -> Option<&Arg<f64>> {
+        self.float_args.get(arg).map(|a| &*a.borrow())
     }
 
-    pub fn get_bool_flag(&self, flag: &String) -> Option<&Flag<bool>> {
-        self.bool_flags.get(flag).map(|f| unsafe { f.as_ref() })
+    pub fn get_bool_arg(&self, arg: &String) -> Option<&Arg<bool>> {
+        self.bool_args.get(arg).map(|a| &*a.borrow())
     }
 
-    pub fn get_string_flag(&self, flag: &String) -> Option<&Flag<String>> {
-        self.string_flags.get(flag).map(|f| unsafe { f.as_ref() })
+    pub fn get_string_arg(&self, arg: &String) -> Option<&Arg<String>> {
+        self.string_args.get(arg).map(|a| &*a.borrow())
     }
 
-    pub fn int_flags(&self) -> HashMap<&str, &Flag<i32>> {
-        self.int_flags
+    pub fn int_args(&self) -> HashMap<&str, &Arg<i32>> {
+        self.int_args
             .iter()
-            .map(|(k, v)| unsafe { (k.as_ref(), v.as_ref()) })
+            .map(|(k, v)| (k.as_str(), &*v.borrow()))
             .collect()
     }
 
-    pub fn float_flags(&self) -> HashMap<&str, &Flag<f64>> {
-        self.float_flags
+    pub fn float_args(&self) -> HashMap<&str, &Arg<f64>> {
+        self.float_args
             .iter()
-            .map(|(k, v)| unsafe { (k.as_ref(), v.as_ref()) })
+            .map(|(k, v)| (k.as_str(), &*v.borrow()))
             .collect()
     }
 
-    pub fn bool_flags(&self) -> HashMap<&str, &Flag<bool>> {
-        self.bool_flags
+    pub fn bool_args(&self) -> HashMap<&str, &Arg<bool>> {
+        self.bool_args
             .iter()
-            .map(|(k, v)| unsafe { (k.as_ref(), v.as_ref()) })
+            .map(|(k, v)| (k.as_str(), &*v.borrow()))
             .collect()
     }
 
-    pub fn string_flags(&self) -> HashMap<&str, &Flag<String>> {
-        self.string_flags
+    pub fn string_args(&self) -> HashMap<&str, &Arg<String>> {
+        self.string_args
             .iter()
-            .map(|(k, v)| unsafe { (k.as_ref(), v.as_ref()) })
+            .map(|(k, v)| (k.as_str(), &*v.borrow()))
             .collect()
     }
 
-    pub fn other_flags(&self) -> HashMap<&str, &Flag<String>> {
-        self.other_flags
+    pub fn other_args(&self) -> HashMap<&str, &Arg<String>> {
+        self.other_args
             .iter()
-            .map(|(k, v)| unsafe { (k.as_ref(), v.as_ref()) })
+            .map(|(k, v)| (k.as_str(), &*v.borrow()))
             .collect()
     }
 
-    pub fn other_args(&self) -> &Vec<String> {
-        &self.other_args
-    }
-}
-
-impl Drop for FlagParser {
-    fn drop(&mut self) {
-        unsafe {
-            self.int_flags.values().for_each(|k| {
-                Box::from_raw(k.as_ptr());
-            });
-            self.float_flags.values().for_each(|k| {
-                Box::from_raw(k.as_ptr());
-            });
-            self.bool_flags.values().for_each(|k| {
-                Box::from_raw(k.as_ptr());
-            });
-            self.string_flags.values().for_each(|k| {
-                Box::from_raw(k.as_ptr());
-            });
-            self.other_flags.values().for_each(|k| {
-                Box::from_raw(k.as_ptr());
-            });
-        }
+    pub fn values(&self) -> &Vec<String> {
+        &self.values
     }
 }

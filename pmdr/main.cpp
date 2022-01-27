@@ -1,9 +1,11 @@
 // Display "Paused" in place of "Work!" or "Rest!" when paused
 // Allow "s" to be pressed to skip current mode (skip work to rest or vice versa)
-#include "ansi_codes.h"
+//#include "ansi_codes.h"
+#include "miniaudio.h"
 #include "terminal.h"
 #include <atomic>
 #include <chrono>
+#include <cstdlib>
 #include <csignal>
 #include <iostream>
 #include <stdexcept>
@@ -16,6 +18,8 @@ typedef unsigned int ui;
 atomic<bool> working(true);
 atomic<bool> paused(false);
 atomic<bool> skip(false);
+ma_engine engine;
+ma_sound work_done_sound, rest_done_sound;
 
 void pt(ui secs, ui prev);
 void beep();
@@ -60,10 +64,16 @@ int main(int argc, char **argv) {
     }
   }
 
+  // Initialize the sounds
+  ma_result result;
+  if ((result = ma_engine_init(NULL, &engine)) != MA_RESULT)
+    return result;
+  if ((result = ma_
+
   // Set the terminal mode to raw
   set_terminal_mode();
   // Start the threads for the beeper and pauser
-  thread beeper(beep);
+  thread soundPlayer(sound);
   thread pauser(listenPause);
   // Print the controls
   puts("p, enter = pause; q, ctrl-c = quit; s = skip");
@@ -107,17 +117,11 @@ void pt(ui secs, ui prev) { // prints the time
   fflush(stdout);
 }
 
-void beep() {
+void sound() {
   bool old = true;
   while (1) {
     while (working == old);
-    for (int i = 0; i < 5; i++) {
-      if (skip) {
-        break;
-      }
-      printf("\a");
-      this_thread::sleep_for(std::chrono::milliseconds(1500));
-    }
+    //
     old = working;
   }
 }

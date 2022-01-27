@@ -1,27 +1,25 @@
--- TODO: "add at" and "add on" commands
-import           Data.Char             (toUpper)
-import           Data.List             (delete, elemIndex)
-import           Data.Maybe            (fromMaybe)
-import           Data.Time.Clock       (UTCTime, addUTCTime, getCurrentTime)
-import           Data.Time.Clock.POSIX (POSIXTime, posixSecondsToUTCTime)
-import           Data.Time.Format      (defaultTimeLocale, formatTime,
-                                        parseTimeM)
-import           Data.Time.LocalTime   (LocalTime (localTimeOfDay), TimeZone,
-                                        getCurrentTimeZone, localTimeToUTC,
-                                        midnight, utcToLocalTime)
-import           System.Directory      (removeFile, renameFile)
-import           System.Environment    (getArgs, lookupEnv)
-import           System.Exit           (die)
-import           System.FilePath       (FilePath, dropFileName, joinPath)
-import           System.IO             (appendFile, hClose, hFlush, hPutStr,
-                                        openTempFile, readFile, stdout,
-                                        writeFile)
-import           System.Posix.Time     (epochTime)
-import           System.Posix.Types    (EpochTime)
-import           Text.Read             (readMaybe)
+-- TODO: add and delete commands
+import           Data.Char
+import           Data.List
+import           Data.Maybe
+import           Data.Time.Clock
+import           Data.Time.Clock.POSIX
+import           Data.Time.Format
+import           Data.Time.LocalTime
+import           System.Directory
+import           System.Environment
+import           System.Exit
+import           System.FilePath
+import           System.IO
+import           System.Posix.Time
+import           System.Posix.Types
+import           Text.Read
 
 type TimeString = String
 type DayString = String
+
+version :: IO ()
+version = putStrLn "versionless"
 
 main :: IO ()
 main = do
@@ -39,14 +37,19 @@ main = do
     ["add","on",day] -> addLogOn path day
     ["read","all"] -> readAllLogs path
     ["read","last"] -> readLastLog path
+    ("read":"tail":num) -> readTailLogs path $ intercalate " " num
     ["read","from",start] -> readLogsFrom path start
     ["read","until",end] -> readLogsUntil path end
     ["read","between",start,end] -> readLogsBetween path start end
     ["read","on",day] -> readLogsOn path day
     ["delete"] -> deleteLog path
+    ["delete","from",start] -> deleteLogsFrom path start
+    ["delete","until",end] -> deleteLogsUntil path end
+    ["delete","between",start,end] -> deleteLogsBetween path start end
     ["delete","at",time] -> deleteLogsAt path time
     ["delete","on",day] -> deleteLogOn path day
     ["clear"] -> clearLogs path
+    ["version"] -> version
     ["help"] -> printHelp
     _ -> die $ "Unknown command: " ++ (unwords args)
 
@@ -58,19 +61,15 @@ addLog path = do
   putStrLn $ "Current Time: " ++ (stringToFormat tz s)
   putStrLn $ "What do you want to log?"
   logMsg <- getLine
-  appendFile path $ s ++ "|" ++ logMsg ++ "\n"
+  if null logMsg
+    then return ()
+    else appendFile path $ s ++ "|" ++ logMsg ++ "\n"
 
 addLogAt :: FilePath -> TimeString -> IO ()
-addLogAt path timeStr = do
-  die "\"add at [time]\" command not implemented"
-  t <- parseLocalTime timeStr
-  return ()
+addLogAt path timeStr = die "\"add at [time]\" command not implemented"
 
 addLogOn :: FilePath -> DayString -> IO ()
-addLogOn path dayStr = do
-  die "\"add on [day]\" command not implemented"
-  t <- parseLocalDay dayStr
-  return ()
+addLogOn path dayStr = die "\"add on [day]\" command not implemented"
 
 readAllLogs :: FilePath -> IO ()
 readAllLogs path = do
@@ -83,6 +82,21 @@ readLastLog path = do
   logLines <- readLogLines path
   tz <- getCurrentTimeZone
   putStrLn . last . map (tupStringToString tz) . mapSplit $ logLines
+
+readTailLogs :: FilePath -> String -> IO ()
+readTailLogs path numStr = do
+  logLines <- readLogLines path
+  tz <- getCurrentTimeZone
+  let l = length logLines
+  num <- if null numStr
+            then return $ l-1
+            else case readMaybe numStr of
+                  Just n  -> return $ if n > 0 then n else l-1
+                  Nothing -> die "Invalid number"
+  mapM_ putStrLn
+    . drop (l-num)
+    . map (tupStringToString tz)
+    . mapSplit $ logLines
 
 readLogsFrom :: FilePath -> TimeString -> IO ()
 readLogsFrom path startStr = do
@@ -171,17 +185,20 @@ deleteLog path = do
   removeFile path
   renameFile tempName path
 
+deleteLogsFrom :: FilePath -> String -> IO ()
+deleteLogsFrom path timeStr = die "delete"
+
+deleteLogsUntil :: FilePath -> String -> IO ()
+deleteLogsUntil path timeStr = die "delete"
+
+deleteLogsBetween :: FilePath -> String -> String -> IO ()
+deleteLogsBetween path startStr endStr = die "delete"
+
 deleteLogsAt :: FilePath -> TimeString -> IO ()
-deleteLogsAt path timeStr = do
-  die "\"delete at [time]\" command not implemented"
-  t <- parseLocalTime timeStr
-  return ()
+deleteLogsAt path timeStr = die "\"delete at [time]\" command not implemented"
 
 deleteLogOn :: FilePath -> DayString -> IO ()
-deleteLogOn path dayStr = do
-  die "\"delete on [day]\" command not implemented"
-  s <- parseLocalDay dayStr
-  return ()
+deleteLogOn path dayStr = die "\"delete on [day]\" command not implemented"
 
 clearLogs :: FilePath -> IO ()
 clearLogs path = do
@@ -195,19 +212,26 @@ printHelp = do
   putStrLn "Daylog is used to log thigs throughout the day"
   putStrLn "\t\tUsage: daylog <command>"
   putStrLn "    add\t\t\t\tAdd a new log with the current time"
-  putStrLn "    add at [time]\t\tAdd log at the given time"
-  putStrLn "    add on [day]\t\tAdd log on the given day"
-  putStrLn "    read all\t\t\tRead all logs"
-  putStrLn "    read last\t\t\tRead the last log"
-  putStrLn "    read from [start]\t\tRead logs at or after the start time"
-  putStrLn "    read until [end]\t\tRead logs before or at the end time"
-  putStrLn "    read between [start] [end]\tRead logs between the start and end times (inclusive)"
-  putStrLn "    read on [day]\t\tRead logs for the given day"
+  putStrLn "\tat [time]\t\tAdd log at the given time"
+  putStrLn "\ton [day]\t\tAdd log on the given day"
+  putStrLn "    read"
+  putStrLn "\tall\t\t\tRead all logs"
+  putStrLn "\tlast\t\t\tRead the last log"
+  putStrLn "\ttail [num]\t\tRead the last n logs if given, otherwise all but the first"
+  putStrLn "\tfrom [start]\t\tRead logs at or after the start time"
+  putStrLn "\tuntil [end]\t\tRead logs before or at the end time"
+  putStrLn "\tbetween [start] [end]\tRead logs between the start and end times (inclusive)"
+  putStrLn "\ton [day]\t\tRead logs for the given day"
   putStrLn "    delete\t\t\tDelete a log from all logs"
-  putStrLn "    delete at [time]\t\tDelete the log(s) at the given time"
-  putStrLn "    delete on [day]\t\tDelete a log on the given day"
+  putStrLn "\tfrom [start]\t\tDelete logs at or after the start time"
+  putStrLn "\tuntil [end]\t\tDelete logs before or at the end time"
+  putStrLn "\tbetween [start] [end]\tDelete logs between the start and end times (inclusive)"
+  putStrLn "\tat [time]\t\tDelete the log(s) at the given time"
+  putStrLn "\ton [day]\t\tDelete a log on the given day"
   putStrLn "    clear\t\t\tClear all logs"
+  putStrLn "    version\t\t\tPrint daylog version"
   putStrLn "    help\t\t\tPrint help (this screen)"
+  putStrLn ""
   putStrLn "All times must be one argument with the format \"HH:MM mm/dd/YYYY\""
   putStrLn "    Example: 14:45 04/09/2007"
   putStrLn "    Example: 08:00 12/15/2021"
@@ -223,9 +247,9 @@ readLogLines path = do
 
 parseLocalDay :: DayString -> IO LocalTime
 parseLocalDay "today" = do
-  utc <- getCurrentTime
+  currUTC <- getCurrentTime
   tz <- getCurrentTimeZone
-  let local = utcToLocalTime tz utc
+  let local = utcToLocalTime tz currUTC
   return $ local{localTimeOfDay=midnight}
 parseLocalDay dayStr = case parseTimeM True defaultTimeLocale "%m/%d/%Y" dayStr :: Maybe LocalTime of
   Just t  -> return t

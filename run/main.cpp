@@ -14,10 +14,11 @@
    * Ex: run test/test.go puts the output file in the current directory
      but run test/test.cpp puts it in the directory with the file
  * Print valid filetypes (in help function) using a map iterator
+ * Allow shell files to be run
+ * Add "sh", "bash", and "zsh" shells
  * Accept just running commands using a flag
    * Ex: run -e {command}
      * Everything after the command is command line arguments for the command
- * Allow bash commands to be input and ran (and timed)
  * Add wasm compilation support
    * Ex: emcc, GOOS=js GOARCH=wasm go build -o ...
  * Update flags (ex. use "--" for non-single letter options)
