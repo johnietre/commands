@@ -42,23 +42,44 @@ def main():
     conn.close()
 
 def add_command(conn_cur, args):
+    days = [
+            "mon", "tue", "wed", "thu", "fri", "sat", "sun",
+            "monday", "tuesday", "wednesday", "thursday", "friday", "saturday",
+            "sunday"
+            ]
     if len(args) != 0: help_command(args)
     what = input("Item: ")
     time = input("Time: ").lower()
+    hour_min = time.split(" ", 1)
+    hour, minu, sec = 23, 59, 59
+    if len(hour_min) != 0:
+        times_tup = None
+        if hour_min[0] != "" and ":" in hour_min[0]:
+            times_tup = parse_hour_min(hour_min[1])
+        else: times_tup = parse_hour_min(hour_min[1])
+        if times_tup != None: hour, minu, sec = times_tup
+    else: hour_min = None
     if time == "today":
         today = datetime.now().date()
-        time = datetime(today.year, today.month, today.day, 23, 59, 59)
-        time = int(time.timestamp())
+        time = datetime(today.year, today.month, today.day, hour, minu, sec)
     elif time == "tomorrow":
-        today = datetime.now().date() + timedelta(1)
-        time = datetime(today.year, today.month, today.day, 23, 59, 59)
-        time = int(time.timestamp())
+        tomorrow = datetime.now().date() + timedelta(1)
+        time = datetime(tomorrow.year, tomorrow.month, tomorrow.day, hour, minu, sec)
+    elif time in days:
+        weekday = days.index(time) % 7
+        today = datetime.now().date()
+        diff = weekday - today.weekday()
+        new_day = None
+        if diff < 0: today + timedelta(7+diff)
+        elif diff == 0: new_day = today + timedelta(7)
+        else: new_day = today + timedelta(diff)
+        time = datetime(new_day.year, new_day.month, new_day.day, hour, minu, sec)
     else:
-        try: time = int(parser.parse(time).timestamp())
+        try: time = parser.parse(time)
         except Exception as e: die(e)
     with conn_cur[0]:
         stmt = "INSERT INTO items VALUES (?,?,?)"
-        conn_cur[0].execute(stmt, (what, time, 0))
+        conn_cur[0].execute(stmt, (what, int(time.timestamp()), 0))
 
 def list_command(conn_cur, args):
     commands = {
@@ -271,6 +292,12 @@ def print_items(items):
 
 def timestring(timestamp):
     return datetime.fromtimestamp(timestamp).strftime("%I:%M %p %a, %b %d, %Y")
+
+def parse_hour_min(time):
+    try:
+        time = parser.parse(time)
+        return (time.hour, time.minute, time.second)
+    except: return None
 
 def die(*args, exit_code=1, **kwargs):
     print(*args, file=sys.stderr, **kwargs)
