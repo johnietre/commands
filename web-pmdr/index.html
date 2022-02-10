@@ -1,0 +1,201 @@
+<!DOCTYPE html>
+
+<html lang="en-US">
+
+<head>
+  <title>Pmdr</title>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <style>
+    h1 {
+      text-align: center;
+    }
+    #display-div {
+      text-align: center;
+      margin: auto;
+      width: 50%;
+    }
+    #work-rest-header {
+      font-size: 4em;
+    }
+    #time-display {
+      font-size: 10em;
+    }
+  </style>
+</head>
+
+<body>
+  <h1>Pomodoro Timer</h1>
+  <p>
+  p, Enter, or Space = Start/Stop<br>
+  r or q = Reset<br>
+  s = Skip<br>
+  </p>
+  <div id="input-div">
+    <label for="work-minute-input">Work Minutes: </label>
+    <input
+      id="work-minute-input"
+      name="work-minute-input"
+      type="number"
+      value="25"
+      min="1"
+      onchange="changeMinute(this.value)">
+    <br>
+    <label for="rest-minute-input">Rest Minutes: </label>
+    <input
+      id="rest-minute-input"
+      name="rest-minute-input"
+      type="number"
+      value="5"
+      min="1">
+    <br><br>
+    <button id="start-stop-button" onclick="startStop()">Start</button>
+    <button id="reset-button" onclick="resetTimer()">Reset</button>
+    <button id="skip-button" onclick="skipBlock()">Skip</button>
+  </div>
+
+  <br>
+  <div id="display-div">
+    <h1 id="work-rest-header">Work!</h1>
+    <h2 id="period-header">Period 0</h1>
+    <div id="time-display">
+      <span id="minute-display">00</span>:<span id="second-display">00</span>
+    </div>
+  </div>
+
+  <script>
+    const workMinuteInput = document.getElementById("work-minute-input");
+    const restMinuteInput = document.getElementById("rest-minute-input");
+    const startStopButton = document.getElementById("start-stop-button");
+    const resetButton = document.getElementById("reset-button");
+    const workRestHeader = document.getElementById("work-rest-header");
+    const periodHeader = document.getElementById("period-header");
+    const minuteDisplay = document.getElementById("minute-display");
+    const secondDisplay = document.getElementById("second-display");
+
+    const workDoneAudio = new Audio("OdessaUp.wav");
+    const restDoneAudio = new Audio("OdessaDown.wav");
+
+    minuteDisplay.innerHTML = workMinuteInput.value;
+
+    let working = true;
+    let workSeconds = 0;
+    let restSeconds = 0;
+    let changeTimeInterval = null;
+    let seconds = 0;
+    let timerStatus = -1; // -1 = not started, 0 = running, 1 = paused
+    let period = 0;
+
+    workSeconds = Number.parseInt(workMinuteInput.value) * 60;
+    seconds = workSeconds;
+    restSeconds = Number.parseInt(restMinuteInput.value) * 60;
+
+    document.addEventListener("keypress", changeStatus);
+
+    function startStop() {
+      if (timerStatus != 0) {
+        startStopButton.innerHTML = "Stop";
+        if (timerStatus == -1) {
+          period = 1;
+          periodHeader.innerHTML = "Period 1";
+          workSeconds = Number.parseInt(workMinuteInput.value) * 60;
+          seconds = workSeconds;
+          restSeconds = Number.parseInt(restMinuteInput.value) * 60;
+        } else {
+          workRestHeader.innerHTML = (working) ? "Work!" : "Rest!";
+        }
+        timerStatus = 0;
+        changeTimeInterval = setInterval(changeTime, 999);
+      } else {
+        clearInterval(changeTimeInterval);
+        timerStatus = 1;
+        startStopButton.innerHTML = "Start";
+        workRestHeader.innerHTML += " (Paused)";
+      }
+    }
+
+    function resetTimer() {
+      clearInterval(changeTimeInterval);
+      timerStatus = -1;
+      period = 0;
+      minuteDisplay.innerHTML = workMinuteInput.value;
+      secondDisplay.innerHTML = "00";
+      workRestHeader.innerHTML = "Work!";
+      startStopButton.innerHTML = "Start";
+      periodHeader.innerHTML = "Period 0";
+      working = true;
+    }
+
+    function skipBlock() {
+      clearInterval(changeTimeInterval);
+      changeWorkRest();
+      secondDisplay.innerHTML = "00";
+      if (timerStatus == 0) {
+        changeTimeInterval = setInterval(changeTime, 999);
+      } else if (timerStatus == 1) {
+        workRestHeader.innerHTML += " (paused)";
+      }
+    }
+
+    function changeTime() {
+      seconds--;
+      let sec = seconds % 60;
+      if (sec == 59) {
+        minuteDisplay.innerHTML = Math.floor(seconds/60);
+      }
+      secondDisplay.innerHTML = formatTime(sec);
+      if (seconds == 0) {
+        if (working)
+          workDoneAudio.play();
+        else
+          restDoneAudio.play();
+        changeWorkRest();
+      }
+    }
+
+    function changeMinute(val) {
+      if (timerStatus == -1)
+        minuteDisplay.innerHTML = val;
+    }
+
+    function changeWorkRest() {
+      if (working) {
+        seconds = restSeconds;
+        workRestHeader.innerHTML = "Rest!";
+      } else {
+        seconds = workSeconds;
+        workRestHeader.innerHTML = "Work!";
+        if (timerStatus != -1) {
+          period++;
+          periodHeader.innerHTML = `Period ${period}`;
+        }
+      }
+      minuteDisplay.innerHTML = seconds / 60;
+      working = !working;
+    }
+
+    function formatTime(t) {
+      return (t > 9) ? String(t) : "0" + String(t);
+    }
+
+    function changeStatus(e) {
+      e = e || window.event;
+      switch (e.key) {
+      case "Enter":
+      case "p":
+      case " ":
+        startStop();
+        break;
+      case "r":
+      case "q":
+        resetTimer();
+        break;
+      case "s":
+        skipBlock();
+        break;
+      }
+    }
+  </script>
+</body>
+
+</html>
