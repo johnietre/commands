@@ -42,21 +42,31 @@ def main():
     conn.close()
 
 def add_command(conn_cur, args):
+    if len(args) > 2: help_command(args)
     days = [
             "mon", "tue", "wed", "thu", "fri", "sat", "sun",
             "monday", "tuesday", "wednesday", "thursday", "friday", "saturday",
             "sunday"
             ]
-    if len(args) != 0: help_command(args)
-    what = input("Item: ")
-    time = input("Time: ").lower()
+    what, time = "", ""
+    # Get the what (item) and time
+    if len(args) > 0:
+        what = args[0]
+        if len(args) == 2: time = args[1]
+        else: time = input("Time: ").lower()
+    else:
+        what = input("Item: ")
+        time = input("Time: ").lower()
     hour_min = time.split(" ", 1)
     hour, minu, sec = 23, 59, 59
-    if len(hour_min) != 0:
+    if len(hour_min) != 1:
         times_tup = None
         if hour_min[0] != "" and ":" in hour_min[0]:
+            times_tup = parse_hour_min(hour_min[0])
+            time = hour_min[1]
+        else:
             times_tup = parse_hour_min(hour_min[1])
-        else: times_tup = parse_hour_min(hour_min[1])
+            time = hour_min[0]
         if times_tup != None: hour, minu, sec = times_tup
     else: hour_min = None
     if time == "today":
@@ -86,6 +96,10 @@ def list_command(conn_cur, args):
         "late": list_late_command,
         "completed": list_completed_command,
         "all": list_all_command,
+        "for": None,
+        "before": None,
+        "after": None,
+        "between": None,
     }
     if len(args) == 0:
         now = datetime.now()
@@ -97,7 +111,13 @@ def list_command(conn_cur, args):
             print(f"{x}{timestring(time)} | {item}")
         return
     cmd = args[0]
-    if cmd not in commands: help_command(args)
+    if cmd not in commands:
+        # TODO
+        if cmd == "for":
+            list_for()
+        else:
+            list_between()
+        help_command(args)
     commands[cmd](conn_cur, args[1:])
 
 def list_late_command(conn_cur, args):
@@ -264,7 +284,7 @@ def help_command(*args):
         elif type(arg) == list:
             print(f"unknown command(s): {' '.join(arg)}")
     print("Usage: dotodo <command> [subcommands]")
-    print('    add\t\t\tAdds an task ("today" or "tomorrow" can be given as the time)')
+    print('    add [item [time]]\tAdds a task ("today" or "tomorrow" can be given as the time)')
     print("    list\t\tLists all uncompleted tasks")
     print("\tlate\t\tLists all past-due uncompleted tasks")
     print("\tcompleted\tLists all completed tasks")
