@@ -1,4 +1,4 @@
-.PHONY: all aliases articles daylog dotodo pmdr prettypath pwdstore run search sock srvr start uproto vocab
+.PHONY: all aliases articles daylog dotodo pmdr prettypath pwdstore run search sock srvr start uproto vocab web-pmdr
 
 all: aliases daylog pmdr prettypath pwdstore run search sock srvr start uproto
 
@@ -45,6 +45,9 @@ uproto: bin
 
 vocab: bin
 	go build -o bin/vocab ./vocab
+
+web-pmdr: bin
+	cp web-pmdr/main.py bin/web-pmdr && chmod u+x bin/web-pmdr
 
 bin:
 	mkdir $@
