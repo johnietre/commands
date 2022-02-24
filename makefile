@@ -26,7 +26,8 @@ pwdstore: bin
 	go build -o bin/pwdstore ./pwdstore
 
 run: bin
-	g++ run/main.cpp -Wall -o bin/run -std=gnu++17
+	#g++ run/main.cpp -Wall -o bin/run -std=gnu++17
+	cd rust-run && cargo build --release && mv target/release/rust-run ../bin/run
 
 search: bin
 	go build -o bin/search ./search
