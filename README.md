@@ -15,6 +15,8 @@ A set of Unix command-line tools/applications
 - A place to hold libraries and packages for different programming languages
 # math
 - A math expression evaluator
+# meyerson
+- A simple web-based process manager
 # pmdr
 - A timer employing the Pomodoro technique
 # prettypath

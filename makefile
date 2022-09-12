@@ -1,6 +1,6 @@
-.PHONY: all aliases articles daylog dotodo journaler math pmdr prettypath pwdstore run search sock srvr start uproto vocab web-pmdr
+.PHONY: all aliases articles daylog dotodo journaler math meyerson pmdr prettypath pwdstore run search sock srvr start uproto vocab web-pmdr
 
-all: aliases daylog journaler math pmdr prettypath pwdstore run search sock srvr start uproto vocab web-pmdr
+all: aliases daylog journaler math meyerson pmdr prettypath pwdstore run search sock srvr start uproto vocab web-pmdr
 
 aliases: bin
 	cp aliases/main.py bin/aliases && chmod u+x bin/aliases
@@ -21,6 +21,9 @@ journaler: bin
 
 math: bin
 	cd math && cargo build --release && mv target/release/math ../bin/math
+
+meyerson: bin
+	go build -o bin/meyerson ./meyerson
 
 pmdr: bin
 	g++ pmdr/main.cpp -Wall -o bin/pmdr -lpthread -std=gnu++17
