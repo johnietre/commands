@@ -1,14 +1,38 @@
 // TODO: Clean and refactor
+// TODO: Add "--bash" and "-b" flags to be passed to run a program as bash
+// TODO: Allow flags to be passed to programs
+// TODO: Delete output after --no-out flag
+// TODO: Stuff like segmentation fault message not being output
+// Building go directory not working
+// In order to pass flags through comp or exec flag, use: --[comp/exec]_arg=--flag
+// To pass multiple arguments in one call, use: --[comp/exec]_arg={--flag1,arg1,-opt}
 // Add help
 use clap::Parser;
-use std::collections::hash_map::DefaultHasher;
+use libc::{read, tcsetattr, termios, TCSANOW};
+use std::collections::{hash_map::DefaultHasher, LinkedList};
 use std::env::temp_dir;
 use std::fs::{canonicalize, remove_file};
 use std::hash::{Hash, Hasher};
+use std::io::{self, Error, ErrorKind, Write};
+use std::os::unix::io::AsRawFd;
 use std::path::PathBuf;
-use std::process::{exit, Command};
+use std::process::{exit, Command, ExitStatus};
 use std::str::FromStr;
+use std::sync::{
+    atomic::{AtomicBool, Ordering},
+    Arc, Mutex,
+};
 use std::time::Instant;
+
+mod ansi;
+use ansi::*;
+
+macro_rules! die {
+    ($code:expr, $($args:tt)*) => ({
+        eprintln!($($args)*);
+        ::std::process::exit($code)
+    });
+}
 
 #[derive(Parser, Debug)]
 struct Args {
@@ -52,6 +76,9 @@ struct Args {
 
     #[clap(long)]
     parse_includes: bool,
+
+    #[clap(short, long)]
+    bash: bool,
 }
 
 impl Args {
@@ -100,7 +127,7 @@ impl FromStr for FileType {
     type Err = &'static str;
     fn from_str(s: &str) -> Result<Self, Self::Err> {
         use FileType::*;
-        match s {
+        match s.to_lowercase().as_str() {
             "c" => Ok(C),
             "cpp" | "cc" | "cxx" => Ok(CPP),
             "f77" | "f90" | "f95" => Ok(F90),
@@ -126,32 +153,28 @@ fn main() {
     // Get the file type
     let file_type = if let Some(t) = args.file_type {
         if args.file_names.len() == 0 && !t.can_have_none() {
+            unsafe { exit(run_multiple(&args)) }
+            /*
             eprintln!("must include file name");
             exit(1);
+            */
         }
         t
     } else {
-        let file_name = args.file_names.get(0).map_or_else(
-            || {
-                eprintln!("must include file name");
-                exit(1)
-            },
-            |name| name,
-        );
+        let file_name = args
+            .file_names
+            .get(0)
+            .map_or_else(|| unsafe { exit(run_multiple(&args)) }, |name| name);
         FileType::from_str(&file_name.extension().unwrap_or_default().to_string_lossy())
-            .unwrap_or_else(|err| {
-                eprintln!("{}", err);
-                exit(1)
-            })
+            .unwrap_or_else(|err| die!(1, "error parsing file type: {}", err))
     };
     // Check the file name(s)
     if args.file_names.len() > 1 && !file_type.can_have_multiple() {
-        eprintln!("only one file name allowed");
-        exit(1);
+        die!(1, "only one file name allowed")
     }
     args.file_type.replace(file_type);
     if args.no_out {
-        args.temp = true;
+        //args.temp = true;
     }
     // Get the output name
     if args.temp {
@@ -234,6 +257,7 @@ fn run_f90(args: &Args) -> i32 {
 }
 
 fn run_go(args: &Args) -> i32 {
+    //if args.no_out { TODO: Make this line active and one below not
     if args.no_out && !args.temp {
         exit(execute(
             Command::new("go")
@@ -255,10 +279,11 @@ fn run_go(args: &Args) -> i32 {
             .envs(envs)
             .arg("build")
             .arg("-o")
-            .arg(args.output_name.as_ref().unwrap_or_else(|| {
-                eprintln!("output name not set");
-                exit(1);
-            }))
+            .arg(
+                args.output_name
+                    .as_ref()
+                    .unwrap_or_else(|| die!(2, "output name not set")),
+            )
             .args(&args.comp_args)
             .args(&args.file_names),
         args,
@@ -405,8 +430,7 @@ fn run_executable(args: &Args) -> i32 {
             PathBuf::from(".").join(name)
         }
     } else {
-        eprintln!("output name not set");
-        exit(1)
+        die!(2, "output name not set")
     };
     execute(Command::new(name).args(&args.exec_args), args, false)
 }
@@ -424,10 +448,9 @@ fn execute(cmd: &mut Command, args: &Args, compiling: bool) -> i32 {
     }
     // Start timing and run the command
     let start = Instant::now();
-    let status = cmd.status().unwrap_or_else(|err| {
-        eprintln!("error encountered: {}", err);
-        exit(1)
-    });
+    let status = cmd
+        .status()
+        .unwrap_or_else(|err| die!(3, "error encountered: {}", err));
     let code = status.code().unwrap_or_else(|| {
         // TODO: Possibly use different default than -1
         if cfg!(unix) {
@@ -457,10 +480,11 @@ fn new_comp_cmd<S: ToString>(compiler: S, args: &Args) -> Command {
     // TODO: Handle Better
     let mut cmd = Command::new(compiler.to_string());
     cmd.arg("-o")
-        .arg(args.output_name.as_ref().unwrap_or_else(|| {
-            eprintln!("output name not set");
-            exit(1);
-        }))
+        .arg(
+            args.output_name
+                .as_ref()
+                .unwrap_or_else(|| die!(2, "output name not set")),
+        )
         .args(&args.file_names)
         .args(&args.comp_args);
     cmd
@@ -471,5 +495,366 @@ fn delete_files(exts: &[&str], base_name: &PathBuf) {
         remove_file(&base_name.with_extension(ext)).unwrap_or_else(|err| {
             eprintln!("error deleting intermediate output file: {}", err);
         });
+    }
+}
+
+unsafe fn run_multiple(_args: &Args) -> i32 {
+    //let mut deferrer = Rc::new(RefCell::new(Deferrer::new()));
+    let deferrer = Arc::new(Mutex::new(Deferrer::new()));
+    let mut stdout = io::stdout().lock();
+    let stdin_fd = io::stdin().as_raw_fd();
+    // Get the old terminal and create the new
+    let mut old_term = termios {
+        c_iflag: 0,
+        c_oflag: 0,
+        c_cflag: 0,
+        c_lflag: 0,
+        c_line: 0,
+        c_cc: [0; 32],
+        c_ispeed: 0,
+        c_ospeed: 0,
+    };
+    if libc::tcgetattr(stdin_fd, (&mut old_term) as *mut _) != 0 {
+        die!(3, "error getting terminal info");
+    }
+    // Set panic handler
+    let df = Arc::downgrade(&deferrer);
+    std::panic::set_hook(Box::new(move |info| {
+        eprintln!(
+            "panic occurred: {}",
+            info.payload().downcast_ref::<&str>().unwrap_or(&"")
+        );
+        if let Some(df) = df.upgrade() {
+            df.lock().unwrap().force_run();
+        }
+    }));
+    // Set ctrlc handler
+    let running = Arc::new(AtomicBool::new(true));
+    let (r, df) = (Arc::clone(&running), Arc::downgrade(&deferrer));
+    ctrlc::set_handler(move || {
+        // Second ctrl-c force quits
+        if !r.swap(false, Ordering::SeqCst) {
+            if let Some(df) = df.upgrade() {
+                df.lock().unwrap().force_run();
+            }
+            exit(0);
+        }
+    })
+    .unwrap_or_else(|_| die!(3, "error setting Ctrl-C handler"));
+    // Set the terminal
+    let new_term = termios {
+        c_lflag: old_term.c_lflag & (!libc::ICANON & !libc::ECHO),
+        c_cc: {
+            let mut vals = old_term.c_cc;
+            vals[libc::VMIN] = 0; // Minimum number of btyes required to be read
+            vals[libc::VTIME] = 1; // Amount of time to wait before read returns
+            vals
+        },
+        ..old_term
+    };
+    if tcsetattr(stdin_fd, TCSANOW, (&new_term) as *const _) != 0 {
+        die!(3, "error setting terminal info");
+    }
+    deferrer.lock().unwrap().push_back(Box::new(move || {
+        if tcsetattr(stdin_fd, TCSANOW, (&old_term) as *const _) != 0 {
+            die!(3, "error resetting terminal info");
+        }
+    }));
+    // TODO: Fix Deferrer; not going to run due
+
+    print!("{}{}{}", SCREEN_SAVE, CLEAR_SCREEN, CUR_TO_HOME);
+    stdout.flush().unwrap();
+    let restore_func = deferrer.lock().unwrap().push_front(Box::new(move || {
+        // TODO: Figure out better way to handle
+        print!("{}{}{}", CLEAR_SCREEN, CUR_TO_HOME, SCREEN_RESTORE);
+    }));
+
+    let mut counter = 0;
+    let mut children = LinkedList::new();
+    let mut changed = Change::NA;
+    let mut buf = [0 as u8; 3];
+    // 1-based position
+    let mut pos = Pos { x: 1, y: 1 };
+    while running.load(Ordering::SeqCst) {
+        if changed != Change::NA {
+            let (skip, y, end) = match changed {
+                Change::Add => (
+                    children.len(),
+                    children.len(),
+                    format!("\r{}{}", children.back().unwrap(), CUR_TO_POS(1, pos.y)),
+                ),
+                Change::Del(y) => (y - 1, y, format!("{}{}", CLEAR_LINE, CUR_TO_POS(1, pos.y))),
+                Change::NA => unreachable!(),
+            };
+            let changes = children
+                .iter()
+                .skip(skip)
+                .fold(CUR_TO_POS(1, y), |acc, &v| {
+                    acc + &format!("\r{}{}{}", CLEAR_LINE, v, CUR_DOWN)
+                })
+                + &end;
+            print!("{}", changes);
+            stdout.flush().unwrap();
+            changed = Change::NA;
+        }
+        let n = read(stdin_fd, buf.as_mut_ptr().cast(), 3);
+        if n == -1 {
+            eprintln!("error reading from stdin, quitting");
+            running.store(false, Ordering::SeqCst);
+            break;
+        } else if n == 0 {
+            continue;
+        }
+        if n == 1 {
+            match buf[0] {
+                b'q' => {
+                    running.store(false, Ordering::SeqCst);
+                    break;
+                }
+                b'a' => {
+                    counter += 1;
+                    children.push_back(counter);
+                    changed = Change::Add;
+                }
+                b'd' => {
+                    if children.len() != 0 {
+                        children = children
+                            .into_iter()
+                            .enumerate()
+                            .filter(|(i, _)| *i != pos.y - 1)
+                            .map(|(_, v)| v)
+                            .collect();
+                        changed = Change::Del(pos.y);
+                        if pos.y != 1 {
+                            pos.y -= 1;
+                            print!("{}", CUR_TO_POS(1, pos.y));
+                            stdout.flush().unwrap();
+                        }
+                    }
+                }
+                _ => panic!("{}", buf[0] as char),
+            }
+        } else if n == 2 {
+            panic!("2");
+        } else {
+            // Arrow key
+            if buf[0] == 27 && buf[1] == 91 {
+                match buf[2] {
+                    65 => {
+                        if pos.y != 1 {
+                            pos.y -= 1;
+                            print!("{}", CUR_UP);
+                            stdout.flush().unwrap();
+                        }
+                    }
+                    66 => {
+                        // Down
+                        if children.len() != 0 && pos.y != children.len() {
+                            pos.y += 1;
+                            print!("{}", CUR_DOWN);
+                            stdout.flush().unwrap();
+                        }
+                    }
+                    67 => (), // Right
+                    68 => (), // Right
+                    _ => (),  // Unknown/unhandled sequence
+                }
+            } else {
+                panic!("3");
+            }
+        }
+    }
+    restore_func.should_run(false);
+    if children.len() == 0 {
+        print!("{}{}", CUR_TO_HOME, SCREEN_RESTORE);
+    } else {
+        print!("{}\n{}", CUR_TO_POS(1, children.len()), SCREEN_RESTORE);
+    };
+    for _child in children.iter() {
+        //libc::kill(child.id() as _, libc::SIGINT);
+    }
+    0
+}
+
+#[derive(Clone, Copy, PartialEq, Eq, Default)]
+struct Pos {
+    x: usize,
+    y: usize,
+}
+
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum Change {
+    NA,
+    Add,
+    Del(usize),
+}
+
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum ProcessStatus {
+    NotStarted,
+    Running,
+    Finished(ExitStatus),
+}
+
+struct Process {
+    name: String,
+    cmd: Command,
+    child: Option<std::process::Child>,
+    status: ProcessStatus,
+}
+
+#[allow(dead_code)]
+impl Process {
+    fn new(name: String, cmd: Command) -> Self {
+        Self {
+            name,
+            cmd,
+            child: None,
+            status: ProcessStatus::NotStarted,
+        }
+    }
+
+    fn start(&mut self) -> io::Result<()> {
+        if self.is_alive() {
+            return Err(Error::new(
+                ErrorKind::InvalidInput,
+                "process is already alive",
+            ));
+        }
+        let child = self.cmd.spawn()?;
+        self.child.replace(child);
+        self.status = ProcessStatus::Running;
+        Ok(())
+    }
+
+    fn kill(&mut self) -> io::Result<()> {
+        if self.is_alive() {
+            self.child.as_mut().expect("child is none").kill()
+        } else {
+            Err(Error::new(ErrorKind::InvalidInput, "process isn't alive"))
+        }
+    }
+
+    fn interrupt(&mut self) -> io::Result<()> {
+        if self.is_alive() {
+            unsafe {
+                libc::kill(
+                    self.child.as_ref().expect("child is none").id() as _,
+                    libc::SIGINT,
+                )
+            };
+            Ok(())
+        } else {
+            Err(Error::new(ErrorKind::InvalidInput, "process isn't alive"))
+        }
+    }
+
+    fn signal(&mut self, sig: libc::c_int) {
+        // TODO: Return some kind of error?
+        unsafe { libc::kill(self.child.as_ref().expect("child is none").id() as _, sig) };
+    }
+
+    fn is_alive(&self) -> bool {
+        use ProcessStatus::*;
+        match self.status {
+            Running => true,
+            NotStarted | Finished(_) => false,
+        }
+    }
+
+    fn name(&self) -> &str {
+        &self.name
+    }
+
+    fn id(&self) -> Option<u32> {
+        Some(self.child.as_ref()?.id())
+    }
+
+    fn try_wait(&mut self) -> io::Result<Option<ExitStatus>> {
+        if let ProcessStatus::Finished(status) = self.status {
+            return Ok(Some(status));
+        }
+        Ok(
+            match self.child.as_mut().expect("child is none").try_wait()? {
+                Some(status) => {
+                    self.child.take();
+                    self.status = ProcessStatus::Finished(status);
+                    Some(status)
+                }
+                None => None,
+            },
+        )
+    }
+
+    fn wait(&mut self) -> io::Result<ExitStatus> {
+        if let ProcessStatus::Finished(status) = self.status {
+            return Ok(status);
+        }
+        let status = self.child.take().expect("child is none").wait()?;
+        self.status = ProcessStatus::Finished(status);
+        Ok(status)
+    }
+}
+
+type DeferFunc = Box<dyn Fn() + Send + Sync + 'static>;
+
+struct Defer {
+    f: DeferFunc,
+    should_run: Arc<AtomicBool>,
+}
+
+impl Defer {
+    fn new(f: DeferFunc) -> Self {
+        Self {
+            should_run: Arc::new(AtomicBool::new(true)),
+            f,
+        }
+    }
+
+    fn run(&self) {
+        if self.should_run.load(Ordering::SeqCst) {
+            (self.f)();
+        }
+    }
+
+    fn should_run(&self, b: bool) {
+        self.should_run.store(b, Ordering::SeqCst);
+    }
+}
+
+// The bool tells whether it has executed or not
+// In order to still run when original function scope ends but it's in multiple threads,
+// wrap in an Arc and use Weak for the threads
+#[derive(Default)]
+struct Deferrer(LinkedList<Arc<Defer>>, bool);
+
+impl Deferrer {
+    const fn new() -> Self {
+        Self(LinkedList::new(), false)
+    }
+
+    fn push_back(&mut self, f: DeferFunc) -> Arc<Defer> {
+        let f = Arc::new(Defer::new(f));
+        self.0.push_back(Arc::clone(&f));
+        f
+    }
+
+    fn push_front(&mut self, f: DeferFunc) -> Arc<Defer> {
+        let f = Arc::new(Defer::new(f));
+        self.0.push_front(Arc::clone(&f));
+        f
+    }
+
+    fn force_run(&mut self) {
+        if !self.1 {
+            self.0.iter().for_each(|d| d.run());
+            self.1 = true;
+        }
+    }
+}
+
+impl Drop for Deferrer {
+    fn drop(&mut self) {
+        self.force_run();
     }
 }

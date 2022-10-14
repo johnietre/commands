@@ -32,7 +32,7 @@ var (
 	flags          = make(map[byte]bool)
 	ignoredFiles   = map[string]bool{
 		".apng": true, ".avif": true, ".bmp": true, ".cur": true,
-		".dat": true, ".docx": true, ".gif": true, ".ico": true,
+    ".dat": true, ".docx": true, ".exe": true, ".gif": true, ".ico": true,
 		".jfif": true, ".jpeg": true, ".jpg": true, ".pjpeg": true,
 		".pjp": true, ".png": true, ".pdf": true, ".svg": true,
 		".tif": true, ".tiff": true, ".webp": true, ".xlsx": true,
@@ -96,16 +96,14 @@ func main() {
 
 	// The statement to match against
 	regexStmt := what
+	if !flags['x'] {
+    regexStmt = regexp.QuoteMeta(regexStmt)
+	}
 	if flags['i'] {
 		regexStmt = "(?i)" + regexStmt
 	}
-	var err error
-	if flags['x'] {
-		rexpr, err = regexp.Compile(regexStmt)
-	} else {
-		rexpr, err = regexp.Compile(regexp.QuoteMeta(regexStmt))
-	}
-	if err != nil {
+  var err error
+  if rexpr, err = regexp.Compile(regexStmt); err != nil {
 		log.Fatal(err)
 	}
 
@@ -272,7 +270,7 @@ func searchFileContents(f *os.File) (linenos []string, err error) {
       err = nil
 			return
 		}
-		if isMatch(line) {
+		if isMatch(strings.TrimSpace(line)) {
 			linenos = append(linenos, fmt.Sprintf("%d", lineno))
       if !flags['l'] {
         return

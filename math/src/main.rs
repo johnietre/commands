@@ -23,13 +23,14 @@ fn main() {
                 return;
             }
         };
-        let line = line.trim();
-        if line == "" {
-            continue;
-        }
-        match Parser::<f64>::eval(line) {
-            Ok(res) => println!("{}", res),
-            Err(e) => eprintln!("{}", e),
+        let line = line.trim().to_lower();
+        if line == "help " {
+            print_help();
+        } else if line != "" {
+            match Parser::<f64>::eval(line) {
+                Ok(res) => println!("{}", res),
+                Err(e) => eprintln!("{}", e),
+            }
         }
     }
 }
@@ -202,11 +203,6 @@ impl Parser<f64> {
                         start = i;
                     }
                 }
-                /*
-                _ => return Err(
-                    format!(r#"unexpected token at position {}: "{}""#, i + 1, b as char).into(),
-                ),
-                */
             }
             if !b.is_ascii_whitespace() {
                 prev = b;
@@ -396,4 +392,11 @@ impl PartialOrd for Operator {
     fn partial_cmp(&self, &other: &Self) -> Option<std::cmp::Ordering> {
         self.precedence().partial_cmp(&other.precedence())
     }
+}
+
+fn print_help() {
+    println!("\
+    +: addition, -: subtraction, *: multiplication, /: division\n\
+    ^: power, !: factorial\
+    ");
 }
