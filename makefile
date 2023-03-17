@@ -1,6 +1,6 @@
-.PHONY: all aliases articles daylog dotodo journaler math meyerson pmdr prettypath pwdstore run search sock srvr start uproto vocab web-pmdr
+.PHONY: all aliases articles daylog dotodo journaler linend math meyerson nuid pmdr prettypath proxyprint pwdstore run search sock srvr start uproto vocab web-pmdr
 
-all: aliases daylog journaler math meyerson pmdr prettypath pwdstore run search sock srvr start uproto vocab web-pmdr
+all: aliases articles daylog dotodo journaler linend math meyerson nuid pmdr prettypath proxyprint pwdstore run search sock srvr start uproto vocab web-pmdr
 
 aliases: bin
 	cp aliases/main.py bin/aliases && chmod u+x bin/aliases
@@ -19,17 +19,26 @@ daylog: bin
 journaler: bin
 	cp journaler/main.py bin/journaler && chmod u+x bin/journaler
 
+linend: bin
+	rustc linend/main.rs -o bin/linend
+
 math: bin
 	cd math && cargo build --release && mv target/release/math ../bin/math
 
 meyerson: bin
 	go build -o bin/meyerson ./meyerson
 
+nuid: bin
+	go build -o bin/nuid ./nuid
+
 pmdr: bin
 	g++ pmdr/main.cpp -Wall -o bin/pmdr -lpthread -std=gnu++17
 
 prettypath: bin
 	cp prettypath/main.py bin/prettypath && chmod u+x bin/prettypath
+
+proxyprint: bin
+	go build -o bin/proxyprint ./proxyprint
 
 pwdstore: bin
 	go build -o bin/pwdstore ./pwdstore

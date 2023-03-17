@@ -13,14 +13,20 @@ A set of Unix command-line tools/applications
 - A tool to keep track of finances
 # getlib
 - A place to hold libraries and packages for different programming languages
+# linend
+- Change line endings
 # math
 - A math expression evaluator
 # meyerson
 - A simple web-based process manager
+# nuid
+- UUID generator and password hasher
 # pmdr
 - A timer employing the Pomodoro technique
 # prettypath
 - A tool that sorts and prints each element in PATH line by line
+# proxyprint
+- A way to proxy and print TCP messages
 # pwdstore
 - A tool to store passwords
 # run
