@@ -56,6 +56,7 @@ func main() {
 	boolFlags["-n"] = flag.Bool("n", false, "Open file with Nano")
 	boolFlags["-o"] = flag.Bool("o", false, "Open file with default app")
 	boolFlags["-v"] = flag.Bool("v", false, "Open file in Vim")
+	boolFlags["-nv"] = flag.Bool("nv", false, "Open file in Neovim")
 	boolFlags["-r"] = flag.Bool("r", false, "Start empty file, clearing old one if it exists")
 	editorPtr := flag.String("e", "", "Editor to open file with")
 	flag.Usage = usageFunc
@@ -92,7 +93,9 @@ func main() {
 			editor = "open"
 		} else if *(boolFlags["-v"]) {
 			editor = "vim"
-		}
+		} else if *(boolFlags["-nv"]) {
+      editor = "nvim"
+    }
 	}
 
 	// Create the file(s)
