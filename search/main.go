@@ -4,6 +4,7 @@ package main
 
 /* IDEAS
  * Look at sync.Pool
+ * Add ability to exclude file types
  */
 
 import (
@@ -32,9 +33,9 @@ var (
 	flags          = make(map[byte]bool)
 	ignoredFiles   = map[string]bool{
 		".apng": true, ".avif": true, ".bmp": true, ".cur": true,
-    ".dat": true, ".docx": true, ".exe": true, ".gif": true, ".ico": true,
+    ".dat": true, ".db": true, ".docx": true, ".exe": true, ".gif": true, ".ico": true,
 		".jfif": true, ".jpeg": true, ".jpg": true, ".pjpeg": true,
-		".pjp": true, ".png": true, ".pdf": true, ".svg": true,
+    ".pjp": true, ".png": true, ".pdf": true, ".sqlite": true, ".svg": true,
 		".tif": true, ".tiff": true, ".webp": true, ".xlsx": true,
 	}
 )
