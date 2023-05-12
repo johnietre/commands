@@ -1,6 +1,8 @@
 # Commands
 A set of Unix command-line tools/applications
 
+# aime
+- A basic command-line gateway to OpenAI's API
 # aliases
 - A tool to print all the aliases and functions from bashrc and bash_aliases files
 # articles
@@ -9,10 +11,14 @@ A set of Unix command-line tools/applications
 - A tool to log things throughout the day
 # dotodo
 - A todo list
+# finfo
+- Get some basic file/directory info
 # finances
 - A tool to keep track of finances
 # getlib
 - A place to hold libraries and packages for different programming languages
+# ghclone
+- A simple way to clone GitHub repos
 # linend
 - Change line endings
 # math
@@ -20,7 +26,7 @@ A set of Unix command-line tools/applications
 # meyerson
 - A simple web-based process manager
 # nuid
-- UUID generator and password hasher
+- Hasher, encoder, and UUID generator
 # pmdr
 - A timer employing the Pomodoro technique
 # prettypath
