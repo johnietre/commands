@@ -17,14 +17,17 @@ fn main() {
     }
     for line in stdin().lock().lines() {
         let line = match line {
-            Ok(line) => line,
+            Ok(mut line) => {
+                line.make_ascii_lowercase();
+                line
+            }
             Err(e) => {
                 eprintln!("error reading line: {}", e);
                 return;
             }
         };
-        let line = line.trim().to_lower();
-        if line == "help " {
+        let line = line.trim();
+        if line == "help" {
             print_help();
         } else if line != "" {
             match Parser::<f64>::eval(line) {
