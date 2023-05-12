@@ -1,6 +1,10 @@
-.PHONY: all aliases articles daylog dotodo journaler linend math meyerson nuid pmdr prettypath proxyprint pwdstore run search sock srvr start uproto vocab web-pmdr
+.PHONY: all aime aliases articles daylog dotodo finfo ghclone journaler linend math meyerson nuid pmdr prettypath proxyprint pwdstore run search sock srvr start uproto vocab web-pmdr
 
-all: aliases articles daylog dotodo journaler linend math meyerson nuid pmdr prettypath proxyprint pwdstore run search sock srvr start uproto vocab web-pmdr
+all: aime aliases articles daylog dotodo finfo ghclone journaler linend math meyerson nuid pmdr prettypath proxyprint pwdstore run search sock srvr start uproto vocab web-pmdr
+
+aime: bin
+	pip install openai
+	cp aime/main.py bin/aime && chmod u+x bin/aime
 
 aliases: bin
 	cp aliases/main.py bin/aliases && chmod u+x bin/aliases
@@ -15,6 +19,12 @@ daylog: bin
 	ghc daylog/Main.hs -o bin/daylog
 	@rm daylog/Main.o
 	@rm daylog/Main.hi
+
+finfo: bin
+	go build -o bin/finfo ./finfo
+
+ghclone: bin
+	go build -o bin/ghclone ./ghclone
 
 journaler: bin
 	cp journaler/main.py bin/journaler && chmod u+x bin/journaler
