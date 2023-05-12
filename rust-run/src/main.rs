@@ -304,7 +304,7 @@ fn run_hs(args: &Args) -> i32 {
     let prog = args.prog("ghc");
     let status = execute(&mut new_comp_cmd(&prog, args), args, true);
     if !args.keep_all_out && prog == "ghc" {
-        delete_files(&["o", "hi"], &args.file_names[0]);
+        delete_files(&["o", "hi"], args);
     }
     status
 }
@@ -351,7 +351,7 @@ fn run_ml(args: &Args) -> i32 {
         } else {
             vec![]
         };
-        delete_files(&exts, &args.file_names[0]);
+        delete_files(&exts, args);
     }
     status
 }
@@ -490,7 +490,7 @@ fn new_comp_cmd<S: ToString>(compiler: S, args: &Args) -> Command {
     cmd
 }
 
-fn delete_files(exts: &[&str], base_name: &PathBuf) {
+fn delete_files(exts: &[&str], base_name: &Args) {
     for &ext in exts.iter() {
         remove_file(&base_name.with_extension(ext)).unwrap_or_else(|err| {
             eprintln!("error deleting intermediate output file: {}", err);

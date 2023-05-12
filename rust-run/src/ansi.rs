@@ -25,13 +25,13 @@ pub fn CUR_LEFTN(N: usize) -> String {
 }
 
 // CUR_{direction}_LINE moves cursor to the beg of line N lines up/down
-pub const CUR_UP_LINE: &str = "\x1b[1E";
-pub const CUR_DOWN_LINE: &str = "\x1b[1F";
+pub const CUR_DOWN_LINE: &str = "\x1b[1E";
+pub const CUR_UP_LINE: &str = "\x1b[1F";
 
-pub fn CUR_UP_LINEN(n: usize) -> String {
+pub fn CUR_DOWN_LINEN(n: usize) -> String {
     format!("\x1b[{}E", n)
 }
-pub fn CUR_DOWN_LINEN(n: usize) -> String {
+pub fn CUR_UP_LINEN(n: usize) -> String {
     format!("\x1b[{}F", n)
 }
 

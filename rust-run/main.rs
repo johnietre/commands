@@ -1,0 +1,555 @@
+#![allow(dead_code)]
+use std::collections::LinkedList;
+use std::io::{prelude::*, stdin, stdout, StdoutLock};
+use std::ops::{Add, Sub};
+use std::os::fd::{AsRawFd, RawFd};
+use std::sync::{Arc, atomic::{AtomicBool, Ordering}};
+
+#[path = "./src/ansi.rs"]
+mod ansi;
+use ansi::CUR_TO_POS;
+
+fn main() {
+    let mut app = App::new(5, 5);
+    unsafe { app.run() };
+}
+
+struct App {
+    term: Term,
+    stdin_fd: RawFd,
+    buf: [u8; 3],
+}
+
+impl App {
+    fn new(width: usize, height: usize) -> Self {
+        Self {
+            term: Term::new(width, height),
+            stdin_fd: stdin().as_raw_fd(),
+            buf: [0u8; 3],
+        }
+    }
+
+    unsafe fn run(&mut self) {
+        let mut deferrer = Deferrer::new();
+        set_term(self.stdin_fd, &mut deferrer);
+        deferrer.push_back(Box::new(|| {
+            print!("{}{}", ansi::CLEAR_SCREEN, ansi::CUR_TO_HOME);
+            println!("DONE");
+            let _ = stdout().flush();
+        }));
+        let _ = write!(self.term, "{}{}", ansi::CLEAR_SCREEN, ansi::CUR_TO_HOME);
+        let _ = self.term.flush();
+
+        loop {
+            let n = libc::read(self.stdin_fd, self.buf.as_mut_ptr().cast(), 3);
+            if n == -1 {
+                eprintln!("error reading from stdin, quitting");
+                return;
+            } else if n == 0 {
+                continue;
+            } else if n == 1 {
+                match self.buf[0] {
+                    b'q' => break,
+                    b'n' => self.editing_mode(),
+                    b'd' => self.delete_line_mode(),
+                    _ => continue,
+                }
+            } else if n == 3 {
+                match self.buf[0] {
+                    0x1b => {
+                        match self.buf[1..] {
+                            [0x5b, 0x41] => self.term.move_pos_up(),
+                            [0x5b, 0x42] => self.term.move_pos_down(),
+                            [0x5b, 0x43] => self.term.move_pos_right(),
+                            [0x5b, 0x44] => self.term.move_pos_left(),
+                            _ => continue,
+                        }
+                        let _ = self.term.write(&[7]);
+                        let _ = self.term.flush();
+                    }
+                    _ => continue,
+                }
+            }
+        }
+    }
+
+    unsafe fn editing_mode(&mut self) {
+        let mut line = String::new();
+        loop {
+            let n = libc::read(self.stdin_fd, self.buf.as_mut_ptr().cast(), 3);
+            if n == -1 {
+                eprintln!("error reading from stdin, quitting");
+                return;
+            } else if n == 0 {
+                continue;
+            } else if n == 1 {
+                match self.buf[0] {
+                    b if !b.is_ascii_control() => {
+                        line.push(b as char);
+                        self.term.add_to_bottom(b);
+                        let _ = self.term.flush();
+                    }
+                    0xa => {
+                        self.term.add_line(line);
+                        let _ = self.term.flush();
+                        break;
+                    }
+                    0x1b => {
+                        break;
+                    }
+                    // DEL (keyboard backspace)
+                    0x7f => {
+                        if line.pop().is_some() {
+                            self.term.pop_from_bottom();
+                            let _  = self.term.flush();
+                        }
+                    },
+                    _ => continue,
+                }
+            }
+        }
+        self.term.clear_bottom();
+        let _ = self.term.flush();
+    }
+
+    unsafe fn delete_line_mode(&mut self) {
+        loop {
+            let n = libc::read(self.stdin_fd, self.buf.as_mut_ptr().cast(), 3);
+            if n == -1 {
+                eprintln!("error reading from stdin, quitting");
+                return;
+            } else if n == 0 {
+                continue;
+            } else if n == 1 {
+                match self.buf[0] {
+                    b'd' => {
+                        self.term.remove_line_at_pos();
+                        let _ = self.term.flush();
+                    }
+                    _ => break,
+                }
+            }
+        }
+    }
+}
+
+struct Term {
+    lines: Vec<Line>,
+    lines_start: usize,
+    bottom_line: Line,
+
+    height: usize,
+    width: usize,
+    pos: Pos,
+    //max_pos: Pos,
+
+    stdout_buf: Vec<u8>,
+    stdout: StdoutLock<'static>,
+}
+
+impl Term {
+    fn new(width: usize, height: usize) -> Self {
+        Self {
+            lines: Vec::new(),
+            lines_start: 0,
+            bottom_line: Line::default(),
+            width,
+            height,
+            pos: Pos::new(1, 1),
+            //max_pos: Pos::new(width - 1, height - 1),
+            stdout_buf: Vec::with_capacity(1024),
+            stdout: stdout().lock(),
+        }
+    }
+
+    fn move_pos_up(&mut self) {
+        if self.pos.y == 1 {
+            return;
+        }
+        self.pos.y -= 1;
+        let _ = self.write(ansi::CUR_UP.as_bytes());
+    }
+
+    fn move_pos_down(&mut self) {
+        if self.pos.y == self.lines.len().min(self.height - 1) {
+            return;
+        }
+        self.pos.y += 1;
+        let _ = self.write(ansi::CUR_DOWN.as_bytes());
+    }
+
+    fn move_pos_left(&mut self) {
+        if self.pos.x == 1 {
+            return;
+        }
+        self.pos.x -= 1;
+        let _ = self.write(ansi::CUR_LEFT.as_bytes());
+    }
+
+    fn move_pos_right(&mut self) {
+        if self.pos.x == self.lines[self.pos.y - 1].len().min(self.width) {
+            return;
+        }
+        self.pos.x += 1;
+        let _ = self.write(ansi::CUR_RIGHT.as_bytes());
+    }
+
+    fn restore_pos(&mut self) {
+        let _ = self.write(ansi::CUR_TO_POS(self.pos.x, self.pos.y).as_bytes());
+    }
+
+    // Adds lines to buffer
+    fn render_lines(&mut self) {
+        self.render_lines_from(0);
+    }
+
+    fn render_lines_from(&mut self, lineno: usize) {
+        let _ = self.write(ansi::CUR_TO_POS(0, lineno + 1).as_bytes());
+        for lineno in lineno..self.lines.len().min(self.height - 1) {
+            let _ = self.write(ansi::CLEAR_LINE.as_bytes());
+            let line = &self.lines[lineno + self.lines_start];
+            let _ = self.write(line.fit(self.width).as_bytes());
+            let _ = self.write(ansi::CUR_DOWN_LINE.as_bytes());
+        }
+    }
+
+    fn add_line(&mut self, s: impl ToString) {
+        let line = Line::new(s.to_string());
+        self.lines.push(line);
+        if self.lines.len() <= self.height - 1 {
+            let _ = write!(
+                self, "{}{}",
+                ansi::CUR_TO_POS(1, self.lines.len()),
+                self.lines[self.lines.len() - 1].fit(self.width),
+            );
+            return;
+        }
+        self.lines_start += 1;
+        self.render_lines();
+    }
+
+    fn remove_line_at_pos(&mut self) {
+        if self.pos.x > self.lines.len() || self.pos.x == 0 {
+            return;
+        }
+        let lineno = self.pos.x - 1;
+        self.lines.remove(lineno);
+        self.render_lines_from(lineno);
+    }
+
+    fn add_to_bottom(&mut self, b: u8) {
+        let c = b as char;
+        //let _ = write!(self.stdout_buf, "{}", CUR_TO_POS(self.bottom_line.len(), self.max_pos.y));
+        self.bottom_line.contents.push(c);
+        if self.bottom_line.len() - self.bottom_line.start > self.width {
+            if self.bottom_line.start == 0 {
+                self.bottom_line.start = 2;
+            } else {
+                self.bottom_line.start += 1;
+            }
+            let _ = write!(
+                self.stdout_buf,
+                "{}{}",
+                CUR_TO_POS(1, self.height), self.bottom_line.fit(self.width),
+            );
+        } else {
+            let _ = self.write(
+                CUR_TO_POS(self.bottom_line.len(), self.height).as_bytes(),
+            );
+            self.stdout_buf.push(b);
+        }
+        self.restore_pos();
+    }
+
+    fn pop_from_bottom(&mut self) {
+        self.bottom_line.contents.pop();
+
+        if self.bottom_line.start > 0{
+            self.bottom_line.start -= 1;
+        }
+        if self.bottom_line.len() == self.width {
+            let _ = write!(
+                self.stdout_buf,
+                "{}{}",
+                CUR_TO_POS(1, self.height), self.bottom_line.contents,
+            );
+        } else if self.bottom_line.len() - self.bottom_line.start == self.width {
+            let _ = write!(
+                self.stdout_buf,
+                "{}{}",
+                CUR_TO_POS(0, self.height), self.bottom_line.substr(self.width),
+            );
+        } else {
+            let _ = self.write(
+                CUR_TO_POS(self.bottom_line.len() + 1, self.height).as_bytes(),
+            );
+            self.stdout_buf.push(b' ');
+        }
+        self.restore_pos();
+    }
+
+    fn clear_bottom(&mut self) {
+        self.bottom_line = Line::new("");
+        let _ = write!(
+            self.stdout_buf,
+            "{}{}",
+            ansi::CUR_TO_POS(0, self.height), ansi::CLEAR_LINE,
+        );
+        self.restore_pos();
+    }
+
+    fn main_menu_bar(&self) -> String {
+        format!(
+            "h:Help",
+        )
+    }
+
+    fn help_menu(&self) -> String {
+        /*
+        format!(
+            "q:Quit"
+            "h:Help"
+            "r:Run"
+            "R:Restart"
+            "c:CTRL-C"
+            "k:Kill",
+        )
+        */
+        String::new()
+    }
+}
+
+impl Write for Term {
+    fn write(&mut self, buf: &[u8]) -> std::io::Result<usize> {
+        self.stdout_buf.extend_from_slice(buf);
+        Ok(buf.len())
+    }
+
+    fn flush(&mut self) -> std::io::Result<()> {
+        self.stdout.write(&self.stdout_buf)?;
+        self.stdout_buf.clear();
+        self.stdout.flush()
+    }
+}
+
+impl ToString for Term {
+    fn to_string(&self) -> String {
+        if self.height < 2 {
+            return format!(
+                "{}{}",
+                1, 2,
+            );
+        }
+        String::new()
+    }
+}
+
+#[derive(Clone, Copy, Default, Debug, PartialEq, Eq)]
+struct Pos {
+    x: usize,
+    y: usize,
+}
+
+impl Pos {
+    fn new(x: usize, y: usize) -> Self {
+        Pos { x, y }
+    }
+}
+
+impl Add for Pos {
+    type Output = Pos;
+
+    fn add(self, rhs: Pos) -> Pos {
+        Self {
+            x: self.x + rhs.x,
+            y: self.y + rhs.y,
+        }
+    }
+}
+
+impl Sub for Pos {
+    type Output = Pos;
+
+    fn sub(self, rhs: Pos) -> Pos {
+        Self {
+            x: self.x - rhs.x,
+            y: self.y - rhs.y,
+        }
+    }
+}
+
+#[derive(Default, Debug)]
+struct Line {
+    contents: String,
+    start: usize,
+}
+
+impl Line {
+    fn new(s: impl ToString) -> Self {
+        Self {
+            contents: s.to_string(),
+            start: 0,
+        }
+    }
+
+    #[inline(always)]
+    fn len(&self) -> usize {
+        self.contents.len()
+    }
+
+    fn substr(&self, width: usize) -> &str {
+        &self.contents[self.start + 1..self.start + width]
+    }
+
+    fn fit(&self, width: usize) -> String {
+        self.fits(self.start, width)
+    }
+
+    fn fits(&self, start: usize, width: usize) -> String {
+        if start == 0 {
+            if self.len() > width {
+                format!("{}", &self.trunc(width))
+            } else {
+                self.contents.clone()
+            }
+        } else {
+            /*
+            if self.len() - self.start <= width - 1 {
+                format!("${}", &self.contents[start..])
+            }
+            */
+            if self.len() - self.start < width {
+                format!("${}", &self.contents[start..])
+            } else {
+                format!("${}$", &self.contents[start + 1..start + width - 1])
+            }
+        }
+    }
+
+    fn trunc(&self, width: usize) -> String {
+        if self.len() > width {
+            format!("{}$", &self.contents[..width - 1])
+        } else {
+            self.contents.clone()
+        }
+    }
+
+    /*
+    fn fit(&self, width: usize) -> String {
+        if self.len() > width {
+            format!("{}$", self.substr(width))
+        } else {
+            self.contents.clone()
+        }
+    }
+    */
+}
+
+type DeferFunc = Box<dyn Fn() + Send + Sync + 'static>;
+
+struct Defer {
+    f: DeferFunc,
+    should_run: Arc<AtomicBool>,
+}
+
+impl Defer {
+    fn new(f: DeferFunc) -> Self {
+        Self {
+            should_run: Arc::new(AtomicBool::new(true)),
+            f,
+        }
+    }
+
+    fn run(&self) {
+        if self.should_run.load(Ordering::SeqCst) {
+            (self.f)();
+        }
+    }
+
+    fn should_run(&self, b: bool) {
+        self.should_run.store(b, Ordering::SeqCst);
+    }
+}
+
+#[derive(Default)]
+struct Deferrer(LinkedList<Arc<Defer>>, bool);
+
+impl Deferrer {
+    const fn new() -> Self {
+        Self(LinkedList::new(), false)
+    }
+
+    fn push_back(&mut self, f: DeferFunc) -> Arc<Defer> {
+        let f = Arc::new(Defer::new(f));
+        self.0.push_back(Arc::clone(&f));
+        f
+    }
+
+    fn push_front(&mut self, f: DeferFunc) -> Arc<Defer> {
+        let f = Arc::new(Defer::new(f));
+        self.0.push_front(Arc::clone(&f));
+        f
+    }
+
+    fn force_run(&mut self) {
+        if !self.1 {
+            self.0.iter().for_each(|d| d.run());
+            self.1 = true;
+        }
+    }
+}
+
+impl Drop for Deferrer {
+    fn drop(&mut self) {
+        self.force_run();
+    }
+}
+
+unsafe fn set_term(stdin_fd: RawFd, deferrer: &mut Deferrer) {
+    // Get the old terminal and create the new
+    let mut old_term = libc::termios {
+        c_iflag: 0,
+        c_oflag: 0,
+        c_cflag: 0,
+        c_lflag: 0,
+        c_line: 0,
+        c_cc: [0; 32],
+        //c_cc: [0; 20],
+        c_ispeed: 0,
+        c_ospeed: 0,
+    };
+    if libc::tcgetattr(stdin_fd, (&mut old_term) as *mut _) != 0 {
+        eprintln!("error getting terminal info");
+        std::process::exit(1);
+    }
+    // Set the terminal
+    let new_term = libc::termios {
+        c_lflag: old_term.c_lflag & (!libc::ICANON & !libc::ECHO),
+        c_cc: {
+            let mut vals = old_term.c_cc;
+            vals[libc::VMIN] = 0; // Minimum number of btyes required to be read
+            vals[libc::VTIME] = 1; // Amount of time to wait before read returns
+            vals
+        },
+        ..old_term
+    };
+    if libc::tcsetattr(stdin_fd, libc::TCSANOW, (&new_term) as *const _) != 0 {
+        eprintln!("error setting terminal info");
+        std::process::exit(1);
+    }
+    deferrer.push_back(Box::new(move || {
+        if libc::tcsetattr(stdin_fd, libc::TCSANOW, (&old_term) as *const _) != 0 {
+            eprintln!("error resetting terminal info");
+        }
+    }));
+}
+
+#[allow(dead_code)]
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+enum Input {
+    Char(char),
+    ArrowUp,
+    ArrowDown,
+    ArrowRight,
+    ArrowLeft,
+}
