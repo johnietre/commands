@@ -43,7 +43,7 @@ func main() {
 		*namePtr = `\w+`
 	}
 	nameExpr := regexp.MustCompile(fmt.Sprintf("(message|enum) %s {", *namePtr))
-	numExpr := regexp.MustCompile(`(= \d+)`)
+	numExpr := regexp.MustCompile(`(= \d+;)`)
 
 	// Read the file and replace what's necessary
 	reader := bufio.NewReader(f)
@@ -84,7 +84,7 @@ func main() {
 				*current = 1
 			}
 		} else if match := numExpr.FindString(line); n != -1 && level == n && match != "" {
-			line = strings.ReplaceAll(line, match, fmt.Sprintf("= %d", *current))
+			line = strings.ReplaceAll(line, match, fmt.Sprintf("= %d;", *current))
 			(*current)++
 		} else if strings.HasPrefix(trimmed, "}") {
 			if n == level && n != -1 {

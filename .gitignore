@@ -4,3 +4,4 @@ bin/*
 *.log
 Odessa.wav
 daylog/*.txt
+target
