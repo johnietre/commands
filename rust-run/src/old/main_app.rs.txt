@@ -1,13 +1,16 @@
 #![allow(dead_code)]
+//use crate::ansi::{self, *};
 use std::collections::LinkedList;
 use std::io::{prelude::*, stdin, stdout, StdoutLock};
 use std::ops::{Add, Sub};
 use std::os::fd::{AsRawFd, RawFd};
-use std::sync::{Arc, atomic::{AtomicBool, Ordering}};
+use std::sync::{
+    atomic::{AtomicBool, Ordering},
+    Arc,
+};
 
-#[path = "./src/ansi.rs"]
 mod ansi;
-use ansi::CUR_TO_POS;
+use ansi::*;
 
 fn main() {
     let mut app = App::new(5, 5);
@@ -101,9 +104,9 @@ impl App {
                     0x7f => {
                         if line.pop().is_some() {
                             self.term.pop_from_bottom();
-                            let _  = self.term.flush();
+                            let _ = self.term.flush();
                         }
-                    },
+                    }
                     _ => continue,
                 }
             }
@@ -142,7 +145,6 @@ struct Term {
     width: usize,
     pos: Pos,
     //max_pos: Pos,
-
     stdout_buf: Vec<u8>,
     stdout: StdoutLock<'static>,
 }
@@ -203,6 +205,7 @@ impl Term {
         self.render_lines_from(0);
     }
 
+    // NOTE: lineno is 0-indexed
     fn render_lines_from(&mut self, lineno: usize) {
         let _ = self.write(ansi::CUR_TO_POS(0, lineno + 1).as_bytes());
         for lineno in lineno..self.lines.len().min(self.height - 1) {
@@ -218,7 +221,8 @@ impl Term {
         self.lines.push(line);
         if self.lines.len() <= self.height - 1 {
             let _ = write!(
-                self, "{}{}",
+                self,
+                "{}{}",
                 ansi::CUR_TO_POS(1, self.lines.len()),
                 self.lines[self.lines.len() - 1].fit(self.width),
             );
@@ -250,12 +254,11 @@ impl Term {
             let _ = write!(
                 self.stdout_buf,
                 "{}{}",
-                CUR_TO_POS(1, self.height), self.bottom_line.fit(self.width),
+                CUR_TO_POS(1, self.height),
+                self.bottom_line.fit(self.width),
             );
         } else {
-            let _ = self.write(
-                CUR_TO_POS(self.bottom_line.len(), self.height).as_bytes(),
-            );
+            let _ = self.write(CUR_TO_POS(self.bottom_line.len(), self.height).as_bytes());
             self.stdout_buf.push(b);
         }
         self.restore_pos();
@@ -264,25 +267,25 @@ impl Term {
     fn pop_from_bottom(&mut self) {
         self.bottom_line.contents.pop();
 
-        if self.bottom_line.start > 0{
+        if self.bottom_line.start > 0 {
             self.bottom_line.start -= 1;
         }
         if self.bottom_line.len() == self.width {
             let _ = write!(
                 self.stdout_buf,
                 "{}{}",
-                CUR_TO_POS(1, self.height), self.bottom_line.contents,
+                CUR_TO_POS(1, self.height),
+                self.bottom_line.contents,
             );
         } else if self.bottom_line.len() - self.bottom_line.start == self.width {
             let _ = write!(
                 self.stdout_buf,
                 "{}{}",
-                CUR_TO_POS(0, self.height), self.bottom_line.substr(self.width),
+                CUR_TO_POS(0, self.height),
+                self.bottom_line.substr(self.width),
             );
         } else {
-            let _ = self.write(
-                CUR_TO_POS(self.bottom_line.len() + 1, self.height).as_bytes(),
-            );
+            let _ = self.write(CUR_TO_POS(self.bottom_line.len() + 1, self.height).as_bytes());
             self.stdout_buf.push(b' ');
         }
         self.restore_pos();
@@ -293,15 +296,14 @@ impl Term {
         let _ = write!(
             self.stdout_buf,
             "{}{}",
-            ansi::CUR_TO_POS(0, self.height), ansi::CLEAR_LINE,
+            ansi::CUR_TO_POS(0, self.height),
+            ansi::CLEAR_LINE,
         );
         self.restore_pos();
     }
 
     fn main_menu_bar(&self) -> String {
-        format!(
-            "h:Help",
-        )
+        format!("h:Help",)
     }
 
     fn help_menu(&self) -> String {
@@ -335,10 +337,7 @@ impl Write for Term {
 impl ToString for Term {
     fn to_string(&self) -> String {
         if self.height < 2 {
-            return format!(
-                "{}{}",
-                1, 2,
-            );
+            return format!("{}{}", 1, 2,);
         }
         String::new()
     }
@@ -398,7 +397,8 @@ impl Line {
     }
 
     fn substr(&self, width: usize) -> &str {
-        &self.contents[self.start + 1..self.start + width]
+        &self.contents[self.start..self.start + width]
+        //&self.contents[self.start + 1..self.start + width]
     }
 
     fn fit(&self, width: usize) -> String {
@@ -418,17 +418,37 @@ impl Line {
                 format!("${}", &self.contents[start..])
             }
             */
+            let (s1, w1) = (start + 1, width - 1);
+            let mut text = TextBuilder::new()
+                .wrap_back(&self.contents[start..s1], BackColor::Yellow)
+                .build();
+            // Check if the end of the string (from the start) is within the width
+            if self.len() - self.start <= width {
+                text.text(&self.contents[s1..]);
+            } else {
+                let sw = s1 + w1;
+                text.text(&self.contents[s1..s1 + sw])
+                    .wrap_back(&self.contents[sw..sw + 1], BackColor::Yellow);
+            }
+            text.to_string()
+            /*
             if self.len() - self.start < width {
                 format!("${}", &self.contents[start..])
             } else {
                 format!("${}$", &self.contents[start + 1..start + width - 1])
             }
+            */
         }
     }
 
     fn trunc(&self, width: usize) -> String {
         if self.len() > width {
-            format!("{}$", &self.contents[..width - 1])
+            //format!("{}$", &self.contents[..width - 1])
+            let w1 = width - 1;
+            Text::new()
+                .text(&self.contents[..w1])
+                .wrap_back(&self.contents[w1..width], BackColor::Yellow)
+                .to_string()
         } else {
             self.contents.clone()
         }

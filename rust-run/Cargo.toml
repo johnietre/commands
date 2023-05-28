@@ -9,7 +9,7 @@ path = "src/main.rs"
 
 [[bin]]
 name = "term-test"
-path = "main.rs"
+path = "other/main.rs"
 
 # See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
 

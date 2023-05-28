@@ -55,7 +55,7 @@ pwdstore: bin
 
 run: bin
 	#g++ run/main.cpp -Wall -o bin/run -std=gnu++17
-	cd rust-run && cargo build --release && mv target/release/rust-run ../bin/run
+	cd rust-run && cargo build --release --bin rust-run && mv target/release/rust-run ../bin/run
 
 search: bin
 	go build -o bin/search ./search

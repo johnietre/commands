@@ -10,11 +10,15 @@ macro_rules! create_func {
 }
 
 macro_rules! add {
-    ($x:expr, $y:expr) => { $x + $y };
+    ($x:expr, $y:expr) => {
+        $x + $y
+    };
 }
 
 macro_rules! pat {
-    ($i:ident) => (Some($i))
+    ($i:ident) => {
+        Some($i)
+    };
 }
 
 macro_rules! func_maker {

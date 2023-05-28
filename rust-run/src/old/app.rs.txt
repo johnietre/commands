@@ -1,0 +1,195 @@
+struct App {
+    running: Arc<AtomicBool>,
+    stdin_fd: RawFd,
+}
+
+impl App {
+    unsafe fn run_multiple(&mut self, _args: &Args) -> i32 {
+        //let mut deferrer = Rc::new(RefCell::new(Deferrer::new()));
+        let deferrer = Arc::new(Mutex::new(Deferrer::new()));
+        let mut stdout = io::stdout().lock();
+        let stdin_fd = io::stdin().as_raw_fd();
+        // Get the old terminal and create the new
+        let mut old_term = termios {
+            c_iflag: 0,
+            c_oflag: 0,
+            c_cflag: 0,
+            c_lflag: 0,
+            c_line: 0,
+            c_cc: [0; 32],
+            c_ispeed: 0,
+            c_ospeed: 0,
+        };
+        if libc::tcgetattr(stdin_fd, (&mut old_term) as *mut _) != 0 {
+            die!(3, "error getting terminal info");
+        }
+        // Set panic handler
+        let df = Arc::downgrade(&deferrer);
+        std::panic::set_hook(Box::new(move |info| {
+            eprintln!(
+                "panic occurred: {}",
+                info.payload().downcast_ref::<&str>().unwrap_or(&"")
+            );
+            if let Some(df) = df.upgrade() {
+                df.lock().unwrap().force_run();
+            }
+        }));
+        // Set ctrlc handler
+        let (r, df) = (Arc::clone(&self.running), Arc::downgrade(&deferrer));
+        ctrlc::set_handler(move || {
+            // Second ctrl-c force quits
+            if !r.swap(false, Ordering::SeqCst) {
+                if let Some(df) = df.upgrade() {
+                    df.lock().unwrap().force_run();
+                }
+                exit(0);
+            }
+        })
+        .unwrap_or_else(|_| die!(3, "error setting Ctrl-C handler"));
+        // Set the terminal
+        let new_term = termios {
+            c_lflag: old_term.c_lflag & (!libc::ICANON & !libc::ECHO),
+            c_cc: {
+                let mut vals = old_term.c_cc;
+                vals[libc::VMIN] = 0; // Minimum number of btyes required to be read
+                vals[libc::VTIME] = 1; // Amount of time to wait before read returns
+                vals
+            },
+            ..old_term
+        };
+        if tcsetattr(stdin_fd, TCSANOW, (&new_term) as *const _) != 0 {
+            die!(3, "error setting terminal info");
+        }
+        deferrer.lock().unwrap().push_back(Box::new(move || {
+            if tcsetattr(stdin_fd, TCSANOW, (&old_term) as *const _) != 0 {
+                die!(3, "error resetting terminal info");
+            }
+        }));
+        // TODO: Fix Deferrer; not going to run due
+
+        print!("{}{}{}", SCREEN_SAVE, CLEAR_SCREEN, CUR_TO_HOME);
+        stdout.flush().unwrap();
+        let restore_func = deferrer.lock().unwrap().push_front(Box::new(move || {
+            // TODO: Figure out better way to handle
+            print!("{}{}{}", CLEAR_SCREEN, CUR_TO_HOME, SCREEN_RESTORE);
+        }));
+
+        restore_func.should_run(false);
+        if children.len() == 0 {
+            print!("{}{}", CUR_TO_HOME, SCREEN_RESTORE);
+        } else {
+            print!("{}\n{}", CUR_TO_POS(1, children.len()), SCREEN_RESTORE);
+        };
+        for _child in children.iter() {
+            //libc::kill(child.id() as _, libc::SIGINT);
+        }
+        0
+    }
+
+    unsafe fn run_commands(&mut self) {
+        // TODO: How is stdin EOF handled
+        let mut counter = 0;
+        let mut children = LinkedList::new();
+        let mut changed = Change::NA;
+        let mut buf = [0 as u8; 3];
+        // 1-based position
+        let mut pos = Pos { x: 1, y: 1 };
+        while self.running.load(Ordering::SeqCst) {
+            let n = read(stdin_fd, buf.as_mut_ptr().cast(), 3);
+            if n == -1 {
+                eprintln!("error reading from stdin, quitting");
+                running.store(false, Ordering::SeqCst);
+                break;
+            } else if n == 0 {
+                if changed != Change::NA {
+                    // TODO: Do only after 0 bytes are read or before each read?
+                    // Check if any changes occurred
+                    let (skip, y, end) = match changed {
+                        Change::Add => (
+                            children.len(),
+                            children.len(),
+                            format!("\r{}{}", children.back().unwrap(), CUR_TO_POS(1, pos.y)),
+                        ),
+                        Change::Del(y) => (y - 1, y, format!("{}{}", CLEAR_LINE, CUR_TO_POS(1, pos.y))),
+                        Change::NA => unreachable!(),
+                    };
+                    let changes = children
+                        .iter()
+                        .skip(skip)
+                        .fold(CUR_TO_POS(1, y), |acc, &v| {
+                            acc + &format!("\r{}{}{}", CLEAR_LINE, v, CUR_DOWN)
+                        })
+                        + &end;
+                    print!("{}", changes);
+                    stdout.flush().unwrap();
+                    changed = Change::NA;
+                }
+                continue;
+            }
+            // Check input the input provided
+            if n == 1 {
+                match buf[0] {
+                    b'q' => {
+                        // Quit
+                        running.store(false, Ordering::SeqCst);
+                        break;
+                    }
+                    b'a' => {
+                        // Add a new process
+                        counter += 1;
+                        children.push_back(counter);
+                        changed = Change::Add;
+                    }
+                    b'd' => {
+                        // Delete a process
+                        if children.len() != 0 {
+                            children = children
+                                .into_iter()
+                                .enumerate()
+                                .filter(|(i, _)| *i != pos.y - 1)
+                                .map(|(_, v)| v)
+                                .collect();
+                            changed = Change::Del(pos.y);
+                            if pos.y != 1 {
+                                pos.y -= 1;
+                                print!("{}", CUR_TO_POS(1, pos.y));
+                                stdout.flush().unwrap();
+                            }
+                        }
+                    }
+                    _ => continue,
+                }
+            } else if n == 2 {
+                // NOTE: Don't know what sends in 2 bytes
+                continue;
+            } else {
+                // Arrow key
+                if buf[0] == 27 && buf[1] == 91 {
+                    match buf[2] {
+                        65 => {
+                            if pos.y != 1 {
+                                pos.y -= 1;
+                                print!("{}", CUR_UP);
+                                stdout.flush().unwrap();
+                            }
+                        }
+                        66 => {
+                            // Down
+                            if children.len() != 0 && pos.y != children.len() {
+                                pos.y += 1;
+                                print!("{}", CUR_DOWN);
+                                stdout.flush().unwrap();
+                            }
+                        }
+                        67 => (), // Left
+                        68 => (), // Right
+                        _ => (),  // Unknown/unhandled sequence
+                    }
+                } else {
+                    // NOTE: Don't know what else sends in 3 bytes
+                    continue;
+                }
+            }
+        }
+    }
+}
