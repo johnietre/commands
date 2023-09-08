@@ -1,25 +1,27 @@
 package main
 
 import (
-  "encoding/json"
-  "flag"
-  "fmt"
-  "log"
-  "net/http"
-  "os"
-  "os/exec"
-  "os/signal"
-  "path/filepath"
-  "runtime"
-  "strings"
-  "sync"
-  "sync/atomic"
+	"encoding/json"
+	"flag"
+	"fmt"
+	"log"
+	"net/http"
+	"os"
+	"os/exec"
+	"os/signal"
+	"path/filepath"
+	"runtime"
+	"strings"
+	"sync"
+	"sync/atomic"
 
-  webs "golang.org/x/net/websocket"
+	"github.com/johnietre/commands/meyerson/cli"
+	webs "golang.org/x/net/websocket"
 )
 
 var (
   addr, indexPath string
+  runCli bool
   procs sync.Map
   conns sync.Map
 
@@ -28,19 +30,25 @@ var (
 )
 
 func init() {
-  log.SetFlags(log.LstdFlags | log.Lshortfile)
-
   _, file, _, ok := runtime.Caller(0)
   if !ok {
     log.Fatal("error getting file")
   }
   indexPath = filepath.Join(filepath.Dir(file), "index.html")
-
-  flag.StringVar(&addr, "addr", "127.0.0.1:3350", "Address to run server on")
-  flag.Parse()
 }
 
 func main() {
+  log.SetFlags(log.LstdFlags | log.Lshortfile)
+
+  // Run the CLI
+  if len(os.Args) != 1 && os.Args[1] == "cli" {
+    cli.Run(os.Args[2:])
+    return
+  }
+
+  flag.StringVar(&addr, "addr", "127.0.0.1:3350", "Address to run server on")
+  flag.Parse()
+
   r := http.NewServeMux()
   r.HandleFunc("/", homeHandler)
   r.Handle("/ws", webs.Handler(wsHandler))
