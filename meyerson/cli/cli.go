@@ -1,19 +1,29 @@
 package cli
 
+// TODO: Allow tasks to be killed/restart
+// TODO: All environment variables to be read from file (from config and CLI)
+
 import (
 	"bufio"
 	"encoding/json"
 	"flag"
 	"fmt"
+  "io"
 	"log"
 	"os"
 	"os/exec"
 	"path/filepath"
 	"runtime"
+  "strconv"
 	"strings"
 	"sync"
 	"sync/atomic"
 	"time"
+)
+
+var (
+  app *App
+  errProcRunning = fmt.Errorf("process running already")
 )
 
 func Run(args []string) {
@@ -51,48 +61,49 @@ func Run(args []string) {
 			f.Close()
 			log.Fatal("error parsing config file: ", err)
 		}
-		app := AppFromConfig(config)
+		app = AppFromConfig(config)
 		if *outDir != "" {
 			app.outDir = *outDir
 		}
-		fmt.Println("Starting processes...")
+		Println("Starting processes...")
 		app.StartProcs()
+    handleInput()
 		app.Wait()
 		return
 	}
 
-	app := &App{outDir: *outDir}
+	app = &App{outDir: *outDir}
 
 	// Create the processes
 	for i := 1; true; {
-		name := readline(fmt.Sprintf("Process %d Name: ", i))
-		if name == "" {
+    proc := &Process{app: app, num: i}
+		proc.Name = readline(fmt.Sprintf("Process %d Name: ", i))
+		if proc.Name == "" {
 			break
 		}
-		prog := readline("Program: ")
+		proc.Program = readline("Program: ")
 
-		var args []string
 		for i := 1; true; i++ {
 			if arg := readline(fmt.Sprintf("Arg %d: ", i)); arg != "" {
-				args = append(args, arg)
+				proc.Args = append(proc.Args, arg)
 			} else {
 				break
 			}
 		}
 
-		env := os.Environ()
+		proc.Env = os.Environ()
 		for {
 			if kv := readline(fmt.Sprintf("Env Var (key=val): ")); kv != "" {
-				env = append(env, kv)
+				proc.Env = append(proc.Env, kv)
 			} else {
 				break
 			}
 		}
 
-		outFilename := readline(
+		proc.OutFilename = readline(
 			"Stdout output filename (- = process number, % = name): ",
 		)
-		errFilename := readline(
+		proc.ErrFilename = readline(
 			"Stderr output filename (- = process number, % = name): ",
 		)
 
@@ -101,47 +112,206 @@ func Run(args []string) {
 			continue
 		}
 
-		cmd := exec.Command(prog, args...)
-		cmd.Env = env
-		proc := &Process{
-			app:         app,
-			Name:        name,
-			num:         i,
-			cmd:         cmd,
-			OutFilename: outFilename,
-			ErrFilename: errFilename,
-		}
 		app.AddProc(proc)
 
 		conf = strings.ToLower(readline("Start now [Y/n]? "))
 		if conf == "y" || conf == "yes" {
-			fmt.Printf("Starting process %d (%s)\n", proc.num, proc.Name)
+			Printf("Starting process %d (%s)\n", proc.num, proc.Name)
 			if err := proc.Start(); err != nil {
-				fmt.Printf(
+				Printf(
 					"error starting process %d (%s): %v\n", proc.num, proc.Name, err,
 				)
 			}
 		}
 
-		fmt.Println("====================")
+		Println("====================")
 		i++
 	}
-	fmt.Println("========================================")
+	Println("========================================")
 
 	// Check for any deletions
 	for {
 		if name := readline("Delete any procs (enter name)? "); name == "" {
 			break
 		} else if !app.RemoveProc(name) {
-			fmt.Println("No process with name: ", name)
+			Println("No process with name: ", name)
 		}
 	}
-	fmt.Println("========================================")
+	Println("========================================")
 
 	// Start the processes
-	fmt.Println("Starting (remaining) processes...")
+	Println("Starting (remaining) processes...")
 	app.StartProcs()
+  handleInput()
 	app.Wait()
+}
+
+func handleInput() {
+  Println("Pause output (p) to enter commands | Ctrl-C to quit")
+
+  // Wait for input
+  printChoices := func() {
+    fmt.Println("Options")
+    fmt.Println("1) Print Options (Print This)")
+    fmt.Println("2) Print Processes")
+    fmt.Println("3) Restart Process (Kill)")
+    fmt.Println("4) Restart Process (Interrupt)")
+    fmt.Println("5) Kill Process")
+    fmt.Println("6) Interrupt Process")
+    fmt.Println("0) Resume Output")
+    fmt.Println("-1) Wait for procs and quit")
+  }
+InputLoop:
+  for {
+    line := strings.ToLower(readline())
+    if line != "p" && line != "P" {
+      continue
+    }
+    stdout.Lock()
+    printChoices()
+    for {
+      for {
+        choice, err := strconv.Atoi(readline("Choice: "))
+        if err != nil {
+          fmt.Println("Invalid choice")
+          continue
+        }
+        switch choice {
+        case 1:
+          printChoices()
+        case 2:
+          printProcesses()
+        case 3:
+          restartProcessKill()
+        case 4:
+          restartProcessInterrupt()
+        case 5:
+          killProcess()
+        case 6:
+          interruptProcess()
+        case 0:
+          stdout.Unlock()
+          continue InputLoop
+        case -1:
+          stdout.Unlock()
+          break InputLoop
+        default:
+          fmt.Println("Invalid choice")
+          continue
+        }
+        break
+      }
+    }
+    stdout.Unlock()
+  }
+}
+
+func printProcesses() {
+  for _, proc := range app.procs {
+    fmt.Printf(
+      "Process #%d (%s): %s\n",
+      proc.num, proc.Name, statusString(proc.status.Load()),
+    )
+  }
+}
+
+func restartProcessKill() {
+  for {
+    num, err := strconv.Atoi(readline("Process # (-1 = Back): "))
+    if err != nil {
+      fmt.Println("Invalid number")
+    }
+    if num == -1 {
+      return
+    }
+    proc := app.GetProcByNum(num)
+    if proc == nil {
+      fmt.Println("No process with num", num)
+      continue
+    }
+    if err := proc.kill(); err != nil {
+      fmt.Println("Error killing process:", err)
+      continue
+    }
+    if err := startProc(proc); err != nil {
+      fmt.Println("Error starting process:", err)
+    }
+  }
+}
+
+func restartProcessInterrupt() {
+  for {
+    num, err := strconv.Atoi(readline("Process # (-1 = Back): "))
+    if err != nil {
+      fmt.Println("Invalid number")
+    }
+    if num == -1 {
+      return
+    }
+    proc := app.GetProcByNum(num)
+    if proc == nil {
+      fmt.Println("No process with num", num)
+      continue
+    }
+    if err := proc.interrupt(); err != nil {
+      fmt.Println("Error interrupt process:", err)
+      continue
+    }
+    if err := startProc(proc); err != nil {
+      fmt.Println("Error starting process:", err)
+    }
+  }
+}
+
+func killProcess() {
+  for {
+    num, err := strconv.Atoi(readline("Process # (-1 = Back): "))
+    if err != nil {
+      fmt.Println("Invalid number")
+    }
+    if num == -1 {
+      return
+    }
+    proc := app.GetProcByNum(num)
+    if proc == nil {
+      fmt.Println("No process with num", num)
+      continue
+    }
+    if err := proc.interrupt(); err != nil {
+      fmt.Println("Error killing process:", err)
+    }
+  }
+}
+
+func interruptProcess() {
+  for {
+    num, err := strconv.Atoi(readline("Process # (-1 = Back): "))
+    if err != nil {
+      fmt.Println("Invalid number")
+    }
+    if num == -1 {
+      return
+    }
+    proc := app.GetProcByNum(num)
+    if proc == nil {
+      fmt.Println("No process with num", num)
+      continue
+    }
+    if err := proc.interrupt(); err != nil {
+      fmt.Println("Error interrupt process:", err)
+    }
+  }
+}
+
+func startProc(proc *Process) error  {
+  // TODO: Do we need to wait?
+  for i := 0; i < 5; i++ {
+    time.Sleep(time.Second)
+    if err := proc.Start(); err != errProcRunning {
+      return err
+    }
+  }
+  return fmt.Errorf("failed to start too many times")
 }
 
 type Config struct {
@@ -165,11 +335,9 @@ func AppFromConfig(config *Config) *App {
 	for i, proc := range app.procs {
 		proc.num = i + 1
 		proc.app = app
-		cmd := exec.Command(proc.Program, proc.Args...)
-		cmd.Env = make([]string, len(env), len(env)+len(proc.Env))
-		copy(cmd.Env, env)
-		cmd.Env = append(cmd.Env, proc.Env...)
-		proc.cmd = cmd
+    procEnv := make([]string, len(env), len(env)+len(proc.Env))
+    copy(procEnv, env)
+    proc.Env = append(procEnv, proc.Env...)
 	}
 	return app
 }
@@ -177,6 +345,15 @@ func AppFromConfig(config *Config) *App {
 func (a *App) AddProc(p *Process) {
 	p.num = len(a.procs) + 1
 	a.procs = append(a.procs, p)
+}
+
+func (a *App) GetProcByNum(num int) *Process {
+  for _, proc := range a.procs {
+    if proc.num == num {
+      return proc
+    }
+  }
+  return nil
 }
 
 // Returns true if a process was deleted
@@ -196,7 +373,7 @@ func (a *App) StartProcs() {
 			time.Sleep(time.Second * proc.Delay)
 		}
 		if err := proc.Start(); err != nil {
-			fmt.Printf(
+			Printf(
 				"error starting process %d (%s): %v\n", proc.num, proc.Name, err,
 			)
 		}
@@ -223,10 +400,33 @@ type Process struct {
 	status           atomic.Uint32
 }
 
+func (p *Process) populateCmd() {
+  if p.status.Load() == statusRunning {
+    return
+  }
+  p.cmd = exec.Command(p.Program, p.Args...)
+  p.cmd.Env = p.Env
+}
+
+func (p *Process) kill() error {
+  if p.status.CompareAndSwap(statusRunning, statusFinished) {
+    return nil
+  }
+  return p.cmd.Process.Signal(os.Kill)
+}
+
+func (p *Process) interrupt() error {
+  if p.status.CompareAndSwap(statusRunning, statusFinished) {
+    return nil
+  }
+  return p.cmd.Process.Signal(os.Interrupt)
+}
+
 func (p *Process) Start() error {
-	if p.status.Load() != statusNotStarted {
-		return nil
+	if p.status.Load() == statusRunning {
+		return errProcRunning
 	}
+  p.populateCmd()
 	var err error
 	// Open the files for output
 	if p.OutFilename != "" {
@@ -237,7 +437,7 @@ func (p *Process) Start() error {
 		}
 		p.outFile, err = os.Create(filepath.Join(p.app.outDir, p.OutFilename))
 		if err != nil {
-			fmt.Printf(
+			Printf(
 				"Error creating stdout output file for %s: %v\n",
 				p.Name, err,
 			)
@@ -256,7 +456,7 @@ func (p *Process) Start() error {
 		}
 		p.errFile, err = os.Create(filepath.Join(p.app.outDir, p.ErrFilename))
 		if err != nil {
-			fmt.Printf(
+			Printf(
 				"Error creating stderr output file for %s: %v\n",
 				p.Name, err,
 			)
@@ -267,18 +467,18 @@ StartProc:
 	// Start the process
 	if err := p.cmd.Start(); err != nil {
 		p.status.Store(statusFinished)
-		fmt.Printf("Error starting %s: %v\n", p.Name, err)
+		Printf("Error starting %s: %v\n", p.Name, err)
 		// Delete the created files
 		if p.outFile != nil {
 			p.outFile.Close()
 			if err := os.Remove(p.outFile.Name()); err != nil {
-				fmt.Printf("Error removing stdout file for %s: %v\n", p.Name, err)
+				Printf("Error removing stdout file for %s: %v\n", p.Name, err)
 			}
 		}
 		if p.errFile != nil {
 			p.errFile.Close()
 			if err := os.Remove(p.errFile.Name()); err != nil {
-				fmt.Printf("Error removing stderr file for %s: %v\n", p.Name, err)
+				Printf("Error removing stderr file for %s: %v\n", p.Name, err)
 			}
 		}
 		return err
@@ -296,9 +496,9 @@ func (p *Process) Wait() {
 	err := p.cmd.Wait()
 	p.status.Store(statusFinished)
 	if err != nil {
-		fmt.Printf("%s terminated with error: %v\n", p.Name, err)
+		Printf("%s terminated with error: %v\n", p.Name, err)
 	} else {
-		fmt.Println(p.Name, "finished")
+		Println(p.Name, "finished")
 	}
 	// Close the files
 	if p.outFile != nil {
@@ -316,6 +516,19 @@ const (
 	statusFinished
 )
 
+func statusString(u uint32) string {
+  switch u {
+  case statusNotStarted:
+    return "NOT STARTED"
+  case statusRunning:
+    return "RUNNING"
+  case statusFinished:
+    return "FINISHED"
+  default:
+    return "UNKNOWN"
+  }
+}
+
 var stdinReader = bufio.NewReader(os.Stdin)
 
 func readline(prompt ...string) string {
@@ -327,4 +540,40 @@ func readline(prompt ...string) string {
 		panic(err)
 	}
 	return strings.TrimSpace(line)
+}
+
+type LockedWriter struct {
+  w io.Writer
+  sync.Mutex
+}
+
+func NewLockedWriter(w io.Writer) *LockedWriter {
+  return &LockedWriter{w: w}
+}
+
+func (s *LockedWriter) Write(p []byte) (int, error) {
+  s.Lock()
+  defer s.Unlock()
+  return s.LockedWrite(p)
+}
+
+func (s *LockedWriter) LockedWrite(p []byte) (int, error) {
+  return s.w.Write(p)
+}
+
+var (
+  stdout = NewLockedWriter(os.Stdout)
+  stderr = NewLockedWriter(os.Stderr)
+)
+
+func Print(args ...any) (int, error) {
+  return fmt.Fprint(stdout, args...)
+}
+
+func Printf(format string, args ...any) (int, error) {
+  return fmt.Fprintf(stdout, format, args...)
+}
+
+func Println(args ...any) (int, error) {
+  return fmt.Fprintln(stdout, args...)
 }
