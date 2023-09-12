@@ -1,28 +1,28 @@
 package cli
 
-// TODO: Allow tasks to be killed/restart
-// TODO: All environment variables to be read from file (from config and CLI)
-
 import (
 	"bufio"
+	"context"
 	"encoding/json"
 	"flag"
 	"fmt"
-  "io"
+	"io"
 	"log"
 	"os"
 	"os/exec"
+	"os/signal"
 	"path/filepath"
 	"runtime"
-  "strconv"
+	"strconv"
 	"strings"
 	"sync"
 	"sync/atomic"
+	"syscall"
 	"time"
 )
 
 var (
-  app *App
+  app = &App{}
   errProcRunning = fmt.Errorf("process running already")
 )
 
@@ -37,6 +37,40 @@ func Run(args []string) {
 		"Generate a template configuration in the current directory",
 	)
 	fs.Parse(args)
+
+  intChan := make(chan os.Signal, 1)
+  go func() {
+    <-intChan
+    for _, proc := range app.procs {
+      if err := proc.interrupt(); err != nil {
+        log.Printf(
+          "error interrupting process %d (%s): %v",
+          proc.num, proc.Name, err,
+        )
+      }
+    }
+    done := app.Done()
+    select {
+    case _, _ = <-done:
+      os.Exit(0)
+    case <-intChan:
+    }
+    for _, proc := range app.procs {
+      proc.kill()
+    }
+    os.Exit(0)
+  }()
+  signal.Notify(intChan, os.Interrupt)
+  termChan := make(chan os.Signal, 1)
+  go func() {
+    <-termChan
+    for _, proc := range app.procs {
+      // TODO: Send sigterm?
+      proc.kill()
+    }
+    os.Exit(0)
+  }()
+  signal.Notify(termChan, syscall.SIGTERM)
 
 	if *configTemp {
 		_, thisFile, _, _ := runtime.Caller(0)
@@ -72,7 +106,7 @@ func Run(args []string) {
 		return
 	}
 
-	app = &App{outDir: *outDir}
+	app.outDir = *outDir
 
 	// Create the processes
 	for i := 1; true; {
@@ -119,7 +153,7 @@ func Run(args []string) {
 			Printf("Starting process %d (%s)\n", proc.num, proc.Name)
 			if err := proc.Start(); err != nil {
 				Printf(
-					"error starting process %d (%s): %v\n", proc.num, proc.Name, err,
+					"Error starting process %d (%s): %v\n", proc.num, proc.Name, err,
 				)
 			}
 		}
@@ -323,6 +357,7 @@ type Config struct {
 type App struct {
 	procs  []*Process
 	outDir string
+  waitOnce sync.Once
 	wg     sync.WaitGroup
 }
 
@@ -380,6 +415,17 @@ func (a *App) StartProcs() {
 	}
 }
 
+// Done returns as channel that is closed whenever all processes are done
+// (app.Wait() returns)
+func (a *App) Done() <-chan struct{} {
+  ch := make(chan struct{})
+  a.waitOnce.Do(func() {
+    a.Wait()
+    close(ch)
+  })
+  return ch
+}
+
 func (a *App) Wait() {
 	a.wg.Wait()
 }
@@ -396,6 +442,7 @@ type Process struct {
 	app              *App
 	num              int
 	cmd              *exec.Cmd
+  cancelFunc context.CancelFunc
 	outFile, errFile *os.File
 	status           atomic.Uint32
 }
@@ -404,8 +451,9 @@ func (p *Process) populateCmd() {
   if p.status.Load() == statusRunning {
     return
   }
-  p.cmd = exec.Command(p.Program, p.Args...)
-  p.cmd.Env = p.Env
+  ctx, cancel := context.WithCancel(context.Background())
+  p.cmd = exec.CommandContext(ctx, p.Program, p.Args...)
+  p.cancelFunc, p.cmd.Env = cancel, p.Env
 }
 
 func (p *Process) kill() error {
@@ -467,7 +515,6 @@ StartProc:
 	// Start the process
 	if err := p.cmd.Start(); err != nil {
 		p.status.Store(statusFinished)
-		Printf("Error starting %s: %v\n", p.Name, err)
 		// Delete the created files
 		if p.outFile != nil {
 			p.outFile.Close()
