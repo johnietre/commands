@@ -8,6 +8,7 @@ import (
 	"io"
 	"log"
 	"net"
+	"os"
 	"strconv"
 	"sync"
 	"syscall"
@@ -104,7 +105,20 @@ func main() {
 		1<<15,
 		"Size of the buffer to use to copy data",
 	)
+	logFilePath := flag.String(
+		"log", "", "File to output logs to (blank is command line",
+	)
 	flag.Parse()
+
+	if *logFilePath != "" {
+		logFile, err := os.OpenFile(
+			*logFilePath, os.O_CREATE|os.O_APPEND|os.O_WRONLY, 0644,
+		)
+		if err != nil {
+			log.Fatalf("error opening log file: %v", err)
+		}
+		log.SetOutput(logFile)
+	}
 
 	if *connectAddrStr != "" {
 		addr, err := net.ResolveTCPAddr("tcp", *connectAddrStr)

@@ -21,7 +21,6 @@ import (
 
 var (
 	addr, indexPath string
-	runCli          bool
 	procs           sync.Map
 	conns           sync.Map
 

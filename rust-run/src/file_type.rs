@@ -7,6 +7,7 @@ pub type RunFunc = fn(&Args) -> Option<i32>;
 
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub enum FileType {
+    BASH,
     C,
     CPP,
     F90,
@@ -53,6 +54,7 @@ impl FileType {
     pub fn run_func(self) -> RunFunc {
         use FileType::*;
         match self {
+            BASH => run_bash,
             C => run_c,
             CPP => run_cpp,
             F90 => run_f90,
@@ -76,6 +78,7 @@ impl std::str::FromStr for FileType {
     fn from_str(s: &str) -> Result<Self, Self::Err> {
         use FileType::*;
         match s.to_lowercase().as_str() {
+            "bash" => Ok(BASH),
             "c" => Ok(C),
             "cpp" | "cc" | "cxx" => Ok(CPP),
             "f77" | "f90" | "f95" => Ok(F90),

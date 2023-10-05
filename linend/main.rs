@@ -18,30 +18,30 @@ fn main() {
         if i == 100 {
             die("too many attempts to create temp file");
         }
-        let tmp = format!("tmp.{}.{}", i, fname);
+        let tmp = format!("{}.tmp.{}", fname, i);
         if fs::metadata(&tmp).is_err() {
             break tmp;
         }
         i += 1;
     };
-    let infile = fs::File::open(&fname).unwrap_or_else(|e| die(e));
-    let mut outfile = fs::File::create(&tmp_fname).unwrap_or_else(|e| die(e));
+    let infile = fs::File::open(&fname).unwrap_or_else(|e| die(format!("error opening file: {}", e)));
+    let mut outfile = fs::File::create(&tmp_fname).unwrap_or_else(|e| die(format!("error creating temp file: {}", e)));
     for line in BufReader::new(infile).lines() {
         let line = match line {
             Ok(line) => line,
             Err(e) => {
                 let _ = fs::remove_file(&tmp_fname);
-                die(e)
+                die(format!("error reading from file: {}", e))
             }
         };
         if let Err(e) = write!(outfile, "{}{}", line, end) {
             let _ = fs::remove_file(&tmp_fname);
-            die(e)
+            die(format!("error writing to temp file: {}", e));
         }
     }
     if let Err(e) = fs::rename(&tmp_fname, fname) {
         let _ = fs::remove_file(&tmp_fname);
-        die(e);
+        die(format!("error renaming temp file: {}", e));
     }
 }
 

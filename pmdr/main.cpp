@@ -1,6 +1,7 @@
 // Display "Paused" in place of "Work!" or "Rest!" when paused
 // Allow "s" to be pressed to skip current mode (skip work to rest or vice versa)
 //#include "ansi_codes.h"
+#define MINIAUDIO_IMPLEMENTATION
 #include "miniaudio.h"
 #include "terminal.h"
 #include <atomic>
@@ -24,6 +25,11 @@ ma_sound work_done_sound, rest_done_sound;
 void pt(ui secs, ui prev);
 void beep();
 void listenPause();
+void sound();
+
+void atexit_handler() {
+  reset_terminal_mode();
+}
 
 int main(int argc, char **argv) {
   // Set the work and rest minutes (get from command-line)
@@ -45,18 +51,18 @@ int main(int argc, char **argv) {
         workMin = stoul(argv[i]);
       } catch (const exception &e) {
         printf("Invalid minutes input\n");
-        return 0;
+        return 1;
       }
     } else if (arg == "-r") {
       if (++i == argc) {
         printf("Must provide number of minutes\n");
-        return 0;
+        return 1;
       }
       try {
         restMin = stoul(argv[i]);
       } catch (const exception &e) {
         printf("Invalid minutes input\n");
-        return 0;
+        return 1;
       }
     } else {
       printf("Invalid flag: %s\n", argv[i]);
@@ -66,12 +72,13 @@ int main(int argc, char **argv) {
 
   // Initialize the sounds
   ma_result result;
-  if ((result = ma_engine_init(NULL, &engine)) != MA_RESULT)
+  if ((result = ma_engine_init(NULL, &engine)) != MA_SUCCESS)
     return result;
-  if ((result = ma_
 
   // Set the terminal mode to raw
   set_terminal_mode();
+  if (atexit(atexit_handler) != 0)
+    cerr << "Error setting atexit handler to reset terminal\n";
   // Start the threads for the beeper and pauser
   thread soundPlayer(sound);
   thread pauser(listenPause);

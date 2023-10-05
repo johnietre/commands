@@ -30,7 +30,7 @@ journaler: bin
 	cp journaler/main.py bin/journaler && chmod u+x bin/journaler
 
 linend: bin
-	rustc linend/main.rs -o bin/linend
+	rustc linend/main.rs -o bin/linend -C opt-level=3
 
 math: bin
 	cd math && cargo build --release && mv target/release/math ../bin/math

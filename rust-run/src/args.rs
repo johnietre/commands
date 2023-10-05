@@ -1,7 +1,7 @@
 use clap::Parser;
 use std::path::PathBuf;
 
-#[derive(Parser, Debug)]
+#[derive(Parser, Default, Debug)]
 /// Run programs with ease.
 pub struct Args {
     /// The names of the files passed.
@@ -65,7 +65,8 @@ pub struct Args {
     pub parse_includes: bool,
 
     #[clap(short, long)]
-    /// Run the rest of the arguments as a Bash command. Must be the first arg.
+    /// Run the rest of the arguments as a Bash command. Must be the first arg (second if preceded
+    /// by --no-time).
     pub bash: bool,
 
     #[clap(short, long)]
@@ -74,6 +75,7 @@ pub struct Args {
 }
 
 impl Args {
+    // Returns the program passed to the args or returns the altnerative passed
     pub fn prog<S: ToString>(&self, alt: S) -> String {
         self.program.as_ref().cloned().unwrap_or(alt.to_string())
     }

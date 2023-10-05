@@ -1,6 +1,6 @@
-#!env/bin/python3
+#!/usr/bin/env python3
 
-import json, openai, os
+import json, openai, os, sys
 from pathlib import Path
 
 source_dir = None
@@ -35,6 +35,9 @@ def chat_completion():
     if len(msgs) == 0:
         msgs.append({"role": "system", "content": "You are an AI assistant."})
 
+    send_history = True
+    if len(sys.argv) > 1:
+        send_history = sys.argv[1].lower() in ["false", "f"]
     while True:
         print("What's your message (triple enter to send, blank message to exit)?")
         new_msg = {"role": "user", "content": ""}
@@ -55,7 +58,7 @@ def chat_completion():
         try:
             response = openai.ChatCompletion.create(
                 model="gpt-3.5-turbo",
-                messages=msgs,
+                messages=msgs if send_history else [],
             )
         except Exception as e:
             print("Error sending:", e)

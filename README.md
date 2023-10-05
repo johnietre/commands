@@ -24,7 +24,7 @@ A set of Unix command-line tools/applications
 # math
 - A math expression evaluator
 # meyerson
-- A simple web-based process manager
+- A simple web-based process manager (with a simple CLI implementation as well)
 # nuid
 - Hasher, encoder, and UUID generator
 # pmdr
@@ -49,3 +49,9 @@ A set of Unix command-line tools/applications
 - A sudoku game
 # uproto
 - A tool to fix/update .proto files
+
+# TODO
+## meyerson
+- [ ] Allow output filenames to be specified during process creation
+    - Take "-" as input to mean default name and nothing to mean no output
+- [ ] Allow processes to be started immediately after creation

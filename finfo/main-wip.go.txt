@@ -1,16 +1,26 @@
 package main
 
+/* TODO:
+ * When walking and recursive, print subdirectory sizes as well
+   * The issue with this currently is that since getting the size means waiting
+     on walking everything in that subdirectory (i.e., submitting new jobs),
+     there's the possibility the subdirectory is so deep that all the workers
+     get hung up waiting for subdirectories to finish calculating size but
+     there are no more workers left available
+*/
+
 import (
-  "flag"
-  "fmt"
-  "io/fs"
-  "log"
-  "os"
-  "path/filepath"
-  "strconv"
-  "strings"
-  "sync"
-  "sync/atomic"
+	"container/list"
+	"flag"
+	"fmt"
+	"io/fs"
+	"log"
+	"os"
+	"path/filepath"
+	"strconv"
+	"strings"
+	"sync"
+	"sync/atomic"
 )
 
 type SizeDenom uint64
@@ -74,10 +84,13 @@ const (
 var (
   sizeDenom = B
   recursive = false
+  total = false
+  walk = false
   prec = -1
 
   size uint64
   totalSize uint64
+  workerChan chan Job
   wg sync.WaitGroup
 )
 
@@ -96,7 +109,9 @@ func main() {
     &prec, "p", -1,
     "Precision of output decimals (-1 for no limit)",
   )
-  total := flag.Bool("total", false, "Calculate the total size of all args")
+  flag.BoolVar(&total, "total", false, "Calculate the total size of all args")
+  flag.BoolVar(&walk, "walk", false, "Print info of directory children")
+  nWorkers := flag.Uint("workers", 1, "Number of workers to spawn (non-zero)")
   // Used only for when looping through the arguments since it can be passed
   // multiple times
   flag.String(
@@ -105,6 +120,7 @@ func main() {
   boolFlags := map[string]bool{
     "r": true,
     "total": true,
+    "walk": true,
   }
 
   // Print help
@@ -135,7 +151,8 @@ func main() {
     }
     // Split value from flag
     if index := strings.IndexByte(name, '='); index != -1 {
-      name, value = name[:index], name[index+1:]
+      name = name[:index]
+      value = name[index+1:]
     } else {
       prevFlag = true
     }
@@ -178,6 +195,14 @@ func main() {
     log.Fatal("must provide path")
   }
 
+  if *nWorkers == 0 {
+    log.Fatal("workers must be at least 1")
+  }
+  workerChan = make(chan Job, *nWorkers * 10)
+  for ; *nWorkers != 0; (*nWorkers)-- {
+    go worker()
+  }
+
   for i, path := range paths {
     if i != 0 {
       fmt.Println(strings.Repeat("=", 40))
@@ -196,14 +221,135 @@ func main() {
       wg.Wait()
     }
     printInfo(info, size)
-    if *total {
+    if total {
       totalSize += size
     }
     size = 0
   }
-  if *total {
+  if total {
     fmt.Println(strings.Repeat("=", 40))
     fmt.Println("Total Size:", makeSizeStr(totalSize))
+  }
+}
+
+type Jobs struct {
+  queue *list.List
+  mtx sync.Mutex
+}
+
+func (jobs *Jobs) newJob(path string, sizePtr *uint64, wg *sync.WaitGroup) Job {
+  return Job{
+    jobs: jobs,
+    path: path,
+    sizePtr: sizePtr,
+    wg: wg,
+  }
+}
+
+func (jobs *Jobs) submitJob(job Job) {
+  jobs.mtx.Lock()
+  defer jobs.mtx.Unlock()
+  jobs.queue.PushBack(job)
+  jobs.lockedSendJobs()
+}
+
+func (jobs *Jobs) sendJobs() {
+  jobs.mtx.Lock()
+  jobs.lockedSendJobs()
+  jobs.mtx.Unlock()
+}
+
+// Loops through the queue to see if any workers are available for new jobs
+// Expects caller to hold jobs.mtx lock
+func (jobs *Jobs) lockedSendJobs() {
+  for elem := jobs.queue.Front(); elem != nil; {
+    select {
+    case workerChan <- elem.Value.(Job):
+      next := elem.Next()
+      jobs.queue.Remove(elem)
+      elem = next
+    default:
+      return
+    }
+  }
+}
+
+type Job struct {
+  jobs *Jobs
+  path string
+  sizePtr *uint64
+  wg *sync.WaitGroup
+}
+
+func (job Job) withPath(path string) Job {
+  job.path = path
+  return job
+}
+
+func (job Job) resubmitWithPath(path string) {
+  job.jobs.submitJob(job.withPath(path))
+}
+
+func (job Job) doJob() {
+  defer job.done()
+  path := job.path
+  // Check to see if it's a file
+  if info, err := os.Stat(path); err != nil {
+    log.Printf("error getting info: %v", err)
+    return
+  } else if !info.IsDir() {
+    size := uint64(info.Size())
+    printInfo(info, size)
+    if job.sizePtr != nil {
+      atomic.AddUint64(job.sizePtr, size)
+    }
+    return
+  }
+  // Go through the directory entries
+  ents, err := os.ReadDir(path)
+  if err != nil {
+    log.Printf("error opening %s: %v", path, err)
+    return
+  }
+  for _, ent := range ents {
+    newPath := filepath.Join(path, ent.Name())
+    info, err := ent.Info()
+    if err != nil {
+      log.Printf("error getting info for %s: %v", newPath, err)
+      continue
+    }
+    if !info.IsDir() {
+      if walk {
+        printInfo(info, uint64(info.Size()))
+      }
+      atomic.AddUint64(job.sizePtr, uint64(info.Size()))
+    } else if recursive {
+      job.resubmitWithPath(newPath)
+    }
+  }
+}
+
+func (job Job) done() {
+  job.wg.Done()
+  // Call this so that more jobs are sent when this one is done
+  // Useful, for example, when there is only one worker, so that this will
+  // queue up the next job for that worker
+  job.jobs.sendJobs()
+}
+
+func doPath(path string) {
+  size, wg := uint64(0), sync.WaitGroup{}
+  submitJob(Job{path: path, sizePtr: &size, wg: &wg})
+  wg.Wait()
+  if total {
+    atomic.AddUint64(&totalSize, size)
+  }
+}
+
+func worker() {
+  for {
+    job := <-workerChan
+    job.doJob()
   }
 }
 
@@ -228,6 +374,29 @@ func walkDir(path string) {
       go walkDir(filepath.Join(path, ent.Name()))
     }
   }
+}
+
+func walkDir2(path string) uint64 {
+  dirSize := uint64(0)
+  ents, err := os.ReadDir(path)
+  if err != nil {
+    log.Printf("error opening %s: %v", path, err)
+    return 0
+  }
+  for _, ent := range ents {
+    info, err := ent.Info()
+    if err != nil {
+      log.Printf("error getting info for %s: %v", filepath.Join(path, ent.Name()), err)
+      continue
+    }
+    if !info.IsDir() {
+      dirSize += uint64(info.Size())
+      continue
+    } else if recursive {
+      dirSize += walkDir2(filepath.Join(path, ent.Name()))
+    }
+  }
+  return dirSize
 }
 
 func printInfo(info fs.FileInfo, size uint64) {
@@ -301,4 +470,9 @@ func commas(u uint64) string {
     str = string(numStr[i]) + str
   }
   return str
+}
+
+func submitJob(job Job) {
+  job.wg.Add(1)
+  workerChan <- job
 }

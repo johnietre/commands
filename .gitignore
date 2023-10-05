@@ -4,4 +4,5 @@ bin/*
 *.log
 Odessa.wav
 daylog/*.txt
-target
+target/
+aime/*.json

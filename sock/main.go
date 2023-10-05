@@ -8,6 +8,7 @@ package main
 import (
 	"bufio"
 	"flag"
+  "log"
 	"os"
 	"os/signal"
 )
@@ -34,6 +35,7 @@ func main() {
 	flag.Parse()
 
 	if server || hub {
+    log.Printf("Running on %s", addr)
 		if ws {
 			go wsServer(hub)
 		} else {

@@ -7,6 +7,12 @@ use std::time::Instant;
 
 pub type RunFunc = fn(&Args) -> Option<i32>;
 
+pub fn run_bash(args: &Args) -> Option<i32> {
+    let mut cmd = Command::new("bash");
+    cmd.arg(&args.file_names[0]).arg(&args.exec_args.join(" "));
+    Some(execute(&mut cmd, args, false))
+}
+
 pub fn run_c(args: &Args) -> Option<i32> {
     let mut cmd = new_compile_cmd(args.prog("gcc"), args);
     if args.default_flags {
@@ -224,6 +230,9 @@ pub fn run_rs(args: &Args) -> Option<i32> {
         return Some(execute(&mut cmd.args(&args.comp_args), args, !args.no_out));
     }
     let mut cmd = new_compile_cmd(args.prog("rustc"), args);
+    if args.default_flags {
+        cmd.arg("--edition=2021");
+    }
     if args.watch {
         return Some(run_watch(args, new_exec_cmd(args), Some(cmd), &[]));
     }
@@ -320,7 +329,11 @@ fn cmd_string(cmd: &Command) -> String {
 }
 
 fn print_start(cmd: &Command, compiling: bool) {
-    println!("{}...\t{}\n", if compiling { "Compiling" } else { "Executing" }, cmd_string(cmd));
+    println!(
+        "{}...\t{}\n",
+        if compiling { "Compiling" } else { "Executing" },
+        cmd_string(cmd)
+    );
 }
 
 fn print_end_time(start: Instant, compiling: bool) {

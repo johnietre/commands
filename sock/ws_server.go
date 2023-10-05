@@ -35,6 +35,7 @@ func wsServer(hub bool) {
 	}
 	echoHandler := func(ws *webs.Conn) {
 		defer ws.Close()
+    log.Print(ws.Request().Header.Values("Sec-Websocket-Protocol"))
 		var msg string
 		for {
 			if err := webs.Message.Receive(ws, &msg); err != nil {
@@ -68,11 +69,18 @@ func wsServer(hub bool) {
 		Addr: addr,
 		Handler: func() *http.ServeMux {
 			r := http.NewServeMux()
+      wsSrvr := &webs.Server{
+        Handshake: func(config *webs.Config, r *http.Request) error {
+          config.Protocol = []string{}
+          return nil
+        },
+      }
 			if hub {
-				r.Handle("/", webs.Handler(hubHandler))
+				wsSrvr.Handler = webs.Handler(hubHandler)
 			} else {
-				r.Handle("/", webs.Handler(echoHandler))
+				wsSrvr.Handler = webs.Handler(echoHandler)
 			}
+      r.Handle("/", wsSrvr)
 			return r
 		}(),
 		ErrorLog: log.New(cerr, "Error: ", 0),

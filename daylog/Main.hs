@@ -37,7 +37,8 @@ main = do
     ["add","on",day] -> addLogOn path day
     ["read","all"] -> readAllLogs path
     ["read","last"] -> readLastLog path
-    ("read":"tail":num) -> readTailLogs path $ intercalate " " num
+    --("read":"tail":num) -> readTailLogs path $ intercalate " " num
+    ("read":"tail":num) -> readTailLogs path $ unwords num
     ["read","from",start] -> readLogsFrom path start
     ["read","until",end] -> readLogsUntil path end
     ["read","between",start,end] -> readLogsBetween path start end
@@ -51,22 +52,29 @@ main = do
     ["clear"] -> clearLogs path
     ["version"] -> version
     ["help"] -> printHelp
-    _ -> die $ "Unknown command: " ++ (unwords args)
+    _ -> die $ "Unknown command: " ++ unwords args
 
 addLog :: FilePath -> IO ()
 addLog path = do
   t <- epochTime
   let s = show t
   tz <- getCurrentTimeZone
-  putStrLn $ "Current Time: " ++ (stringToFormat tz s)
-  putStrLn $ "What do you want to log?"
+  putStrLn $ "Current Time: " ++ stringToFormat tz s
+  putStrLn "What do you want to log?"
   logMsg <- getLine
   if null logMsg
     then return ()
     else appendFile path $ s ++ "|" ++ logMsg ++ "\n"
 
 addLogAt :: FilePath -> TimeString -> IO ()
-addLogAt path timeStr = die "\"add at [time]\" command not implemented"
+addLogAt path timeStr = do
+  t <- parseLocalTime timeStr
+  putStrLn "What do you want to log?"
+  logMsg <- getLine
+  if null logMsg
+    then return ()
+    else writeToFileAt path logMsg t
+  return ()
 
 addLogOn :: FilePath -> DayString -> IO ()
 addLogOn path dayStr = die "\"add on [day]\" command not implemented"
@@ -106,7 +114,7 @@ readLogsFrom path startStr = do
   mapM_ putStrLn
     . map tupToString
     . map tupToFormat
-    . tupFrom start
+    . tupsFrom start
     . map (tupToLocal tz)
     . map tupToUTC
     . map tupToPOSIX
@@ -121,7 +129,7 @@ readLogsUntil path endStr = do
   mapM_ putStrLn
     . map tupToString
     . map tupToFormat
-    . tupUntil end
+    . tupsUntil end
     . map (tupToLocal tz)
     . map tupToUTC
     . map tupToPOSIX
@@ -137,7 +145,7 @@ readLogsBetween path startStr endStr = do
   mapM_ putStrLn
     . map tupToString
     . map tupToFormat
-    . tupBetween start end
+    . tupsBetween start end
     . map (tupToLocal tz)
     . map tupToUTC
     . map tupToPOSIX
@@ -155,7 +163,7 @@ readLogsOn path dayStr = do
    in mapM_ putStrLn
       . map tupToString
       . map tupToFormat
-      . tupBetween start end
+      . tupsBetween start end
       . map (tupToLocal tz)
       . map tupToUTC
       . map tupToPOSIX
@@ -244,6 +252,27 @@ readLogLines :: FilePath -> IO [String]
 readLogLines path = do
   contents <- readFile path
   if null contents then die "No logs" else return $ lines contents
+
+writeLogFileAt :: FilePath -> String -> LocalTime -> IO ()
+writeLogFileAt path logMsg at = do
+  tz <- getCurrentTimeZone
+  withFile path ReadMode (\readHandle -> do
+    withFile path WriteMode (\writeHandle -> do
+      line <- hGetLine readHandle
+      let (time, _) = (tupToLocal tz )
+        . tupToUTC
+        . tupToPosix
+        . tupToEpoch
+        . splitLine $ line
+      _ <- if time <= at
+              then (do
+                --
+              )
+              else hPutStrLn line
+      --
+    )
+  )
+  return ()
 
 parseLocalDay :: DayString -> IO LocalTime
 parseLocalDay "today" = do
@@ -345,23 +374,31 @@ tupStringToFormat tz (t, s) = (stringToFormat tz t, s)
 tupStringToString :: TimeZone -> (String, String) -> String
 tupStringToString tz = tupToString . tupStringToFormat tz
 
+-- |
+tupToLine :: (String, String) -> String
+tupToLine (time, msg) = time ++ "|" ++ logMsg ++ "\n"
+
 -- |The 'mapSplit' function takes a list of strings and maps it with the
 -- 'splitOnce' function with the split character as '|'
 mapSplit :: [String] -> [(String, String)]
-mapSplit = map (splitOnce '|')
+mapSplit = map splitLine
 
--- |The 'tupFrom' function takes a starting time and list of tuples of local
+-- |The 'splitLine' function takes a log line and splits it on the first '|'
+splitLine :: String -> (String, String)
+splitLine = splitOnce '|'
+
+-- |The 'tupsFrom' function takes a starting time and list of tuples of local
 -- times and strings and returns all elements with a time after the start
-tupFrom :: LocalTime -> [(LocalTime, String)] -> [(LocalTime, String)]
-tupFrom start = dropWhile ((< start) . fst)
+tupsFrom :: LocalTime -> [(LocalTime, String)] -> [(LocalTime, String)]
+tupsFrom start = dropWhile ((< start) . fst)
 
--- |The 'tupUntil' function takes a ending time and list of tuples of local
+-- |The 'tupsUntil' function takes a ending time and list of tuples of local
 -- times and strings and takes all elements with a time before the end
-tupUntil :: LocalTime -> [(LocalTime, String)] -> [(LocalTime, String)]
-tupUntil end = takeWhile ((<= end) . fst)
+tupsUntil :: LocalTime -> [(LocalTime, String)] -> [(LocalTime, String)]
+tupsUntil end = takeWhile ((<= end) . fst)
 
--- |The 'tupBetween' function takes starting and ending times, as well as a
--- list of local times and strings and combines the 'tupFrom' and 'tupUntil'
+-- |The 'tupsBetween' function takes starting and ending times, as well as a
+-- list of local times and strings and combines the 'tupsFrom' and 'tupsUntil'
 -- functions
-tupBetween :: LocalTime -> LocalTime -> [(LocalTime, String)] -> [(LocalTime, String)]
-tupBetween start end = tupUntil end . tupFrom start
+tupsBetween :: LocalTime -> LocalTime -> [(LocalTime, String)] -> [(LocalTime, String)]
+tupsBetween start end = tupsUntil end . tupsFrom start
