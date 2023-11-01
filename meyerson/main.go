@@ -20,8 +20,12 @@ import (
 )
 
 var (
-	addr, indexPath string
+	addr, indexPath, jsPath, cssPath string
 	procs           sync.Map
+
+  globalEnv []string
+  globalEnvMtx sync.RWMutex
+
 	conns           sync.Map
 
 	running  int32
@@ -34,10 +38,12 @@ func init() {
 		log.Fatal("error getting file")
 	}
 	indexPath = filepath.Join(filepath.Dir(file), "index.html")
+  jsPath = filepath.Join(filepath.Dir(file), "index.js")
+  cssPath = filepath.Join(filepath.Dir(file), "index.css")
 }
 
 func main() {
-	log.SetFlags(log.LstdFlags | log.Lshortfile)
+	log.SetFlags(0)
 
 	// Run the CLI
 	if len(os.Args) != 1 && os.Args[1] == "cli" {
@@ -53,10 +59,21 @@ func main() {
 		fmt.Fprintln(out, "  cli\tRun CLI")
 	}
 	flag.StringVar(&addr, "addr", "127.0.0.1:3350", "Address to run server on")
+  configPath := flag.String("config", "", "Config to load")
 	flag.Parse()
+  
+  if *configPath != "" {
+    config, err := loadConfig(*configPath)
+    if err != nil {
+      log.Fatal("error loading config: ", err)
+    }
+    populateFromConfig(config)
+  }
 
 	r := http.NewServeMux()
 	r.HandleFunc("/", homeHandler)
+	r.HandleFunc("/index.js", jsHandler)
+	r.HandleFunc("/index.css", cssHandler)
 	r.Handle("/ws", webs.Handler(wsHandler))
 
 	srvr := http.Server{
@@ -92,6 +109,14 @@ func main() {
 
 func homeHandler(w http.ResponseWriter, r *http.Request) {
 	http.ServeFile(w, r, indexPath)
+}
+
+func jsHandler(w http.ResponseWriter, r *http.Request) {
+  http.ServeFile(w, r, jsPath)
+}
+
+func cssHandler(w http.ResponseWriter, r *http.Request) {
+  http.ServeFile(w, r, cssPath)
 }
 
 func wsHandler(ws *webs.Conn) {
@@ -192,13 +217,15 @@ const (
 	ActionInterrupt string = "interrupt"
 	ActionDel       string = "del"
 	ActionRefresh   string = "refresh"
+  ActionEnv string = "env"
 	ActionError     string = "error"
 )
 
 const (
-	ProcessStopped int32 = iota
+	ProcessNotStarted int32 = iota
 	ProcessRunning
 	ProcessStopping
+  ProcessStopped
 )
 
 var (
@@ -222,6 +249,16 @@ type Process struct {
 	cmd    *exec.Cmd
 	status int32
 	err    atomic.Value
+}
+
+func ProcFromCLI(proc *cli.Process) *Process {
+  return &Process{
+    Name: proc.Name,
+    Path: proc.Program,
+    Args: proc.Args,
+    Env: proc.Env,
+    Dir: proc.Dir,
+  }
 }
 
 func (p *Process) Start() error {
@@ -334,6 +371,35 @@ func notify(proc *Process, action string) {
 		}
 		return true
 	})
+}
+
+func loadConfig(path string) (*cli.Config, error) {
+  f, err := os.Open(path)
+  if err != nil {
+    return nil, err
+  }
+  defer f.Close()
+  config := &cli.Config{}
+  if err := json.NewDecoder(f).Decode(config); err != nil {
+    return nil, err
+  }
+  return config, nil
+}
+
+func parseConfig(bytes []byte) (*cli.Config, error) {
+  config := &cli.Config{}
+  if err := json.Unmarshal(bytes, config); err != nil {
+    return nil, err
+  }
+  return config, nil
+}
+
+func populateFromConfig(config *cli.Config) {
+  for _, cproc := range config.Procs {
+    proc := ProcFromCLI(cproc)
+    procs.Store(proc.Name, proc)
+  }
+  globalEnv = config.Env
 }
 
 type Buffer struct {
