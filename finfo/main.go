@@ -1,16 +1,17 @@
 package main
 
 import (
-  "flag"
-  "fmt"
-  "io/fs"
-  "log"
-  "os"
-  "path/filepath"
-  "strconv"
-  "strings"
-  "sync"
-  "sync/atomic"
+	"flag"
+	"fmt"
+	"io/fs"
+	"log"
+	"os"
+	"path/filepath"
+	"regexp"
+	"strconv"
+	"strings"
+	"sync"
+	"sync/atomic"
 )
 
 type SizeDenom uint64
@@ -76,6 +77,7 @@ var (
   recursive = false
   prec = -1
 
+  matchFunc = func(string) bool { return true }
   size uint64
   totalSize uint64
   wg sync.WaitGroup
@@ -102,9 +104,27 @@ func main() {
   flag.String(
     "path", "", "Explicitly specify path (can be passed multiple times)",
   )
+  regexStr := flag.String(
+    "regex", "",
+    "Regex expression to match paths against when calculating size",
+  )
+  excludeMatch := flag.Bool(
+    "excl", false, "Exclude regular expression matches",
+  )
+  filesOnly := flag.Bool(
+    "files", false,
+    "Match only files with regular expressions; shouldn't pass --dirs with this flag",
+  )
+  dirsOnly := flag.Bool(
+    "dirs", false, 
+    "Match only directories with regular expressions; shouldn't pass --files with this flag",
+  )
   boolFlags := map[string]bool{
     "r": true,
     "total": true,
+    "excl": true,
+    "files": true,
+    "dirs": true,
   }
 
   // Print help
@@ -166,7 +186,7 @@ func main() {
     if flag.Lookup(name) != nil {
       args = append(args, arg)
       // No value will be defined in next arg if this is a boolean flag
-      prevFlag = !boolFlags[name]
+      prevFlag = !boolFlags[name] || value == ""
     } else {
       paths = append(paths, arg)
       prevFlag = false
@@ -176,6 +196,33 @@ func main() {
   flag.CommandLine.Parse(args)
   if len(paths) == 0 {
     log.Fatal("must provide path")
+  }
+
+  if *regexStr != "" {
+    regex, err := regexp.Compile(*regexStr)
+    if err != nil {
+      log.Fatal("invalid regex: ", err)
+    }
+    matchFunc = regex.MatchString
+  }
+  if *excludeMatch {
+    f := matchFunc
+    matchFunc = func(s string) bool { return !f(s) }
+  }
+  if *filesOnly {
+    f := matchFunc
+    matchFunc = func(s string) bool {
+      l := len(s)
+      return l == 0 || s[l-1] == '/' || f(s)
+    }
+  }
+  if *dirsOnly {
+    f := matchFunc
+    matchFunc = func(s string) bool {
+      l := len(s)
+      println(s, l == 0 || s[l-1] != '/' || f(s))
+      return l == 0 || s[l-1] != '/' || f(s)
+    }
   }
 
   for i, path := range paths {
@@ -221,11 +268,19 @@ func walkDir(path string) {
       continue
     }
     if !info.IsDir() {
-      atomic.AddUint64(&size, uint64(info.Size()))
+      if matchFunc(ent.Name()) {
+        atomic.AddUint64(&size, uint64(info.Size()))
+      }
       continue
     } else if recursive {
-      wg.Add(1)
-      go walkDir(filepath.Join(path, ent.Name()))
+      name := ent.Name()
+      if l := len(name); l == 0 || name[l-1] != '/' {
+        name += "/"
+      }
+      if matchFunc(name) {
+        wg.Add(1)
+        go walkDir(filepath.Join(path, ent.Name()))
+      }
     }
   }
 }

@@ -10,4 +10,8 @@ require (
 	golang.org/x/term v0.6.0
 )
 
-require golang.org/x/sys v0.6.0 // indirect
+require (
+	github.com/klauspost/compress v1.10.3 // indirect
+	golang.org/x/sys v0.6.0 // indirect
+	nhooyr.io/websocket v1.8.7 // indirect
+)

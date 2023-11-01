@@ -1,52 +1,63 @@
 package main
 
 import (
+	"context"
 	"encoding/json"
+	"errors"
+	"io"
 	"log"
 	"net/http"
 	"strings"
 	"sync"
 
-	webs "golang.org/x/net/websocket"
+	//webs "golang.org/x/net/websocket"
+	webs "nhooyr.io/websocket"
 )
+
+func isGotClose(err error) bool {
+  return strings.Contains(
+    err.Error(), "failed to get reader: received close frame",
+  )
+}
 
 func wsServer(hub bool) {
 	type hubMsg struct{ From, Msg string }
 	var conns sync.Map
 	var hubChan chan hubMsg
 
-	hubHandler := func(ws *webs.Conn) {
-		defer ws.Close()
-		defer conns.Delete(ws.RemoteAddr().String())
-		conns.Store(ws.RemoteAddr().String(), ws)
-		var msg string
+	hubHandler := func(ws *webs.Conn, r *http.Request) {
+		defer ws.Close(webs.StatusNormalClosure, "")
+		defer conns.Delete(r.RemoteAddr)
+		conns.Store(r.RemoteAddr, ws)
 		for {
-			if err := webs.Message.Receive(ws, &msg); err != nil {
-				if err.Error() != "EOF" {
-					printErr(err, false)
-				}
-				return
-			}
+      mt, msg, err := ws.Read(context.Background())
+      if err != nil {
+        if !errors.Is(err, io.EOF) && !isGotClose(err) {
+          printErr(err, false)
+        }
+        return
+      } else if mt != webs.MessageText {
+        // TODO
+        continue
+      }
 			hubChan <- hubMsg{
-				ws.RemoteAddr().String(),
-				strings.ReplaceAll(msg, "\n", ""),
+				r.RemoteAddr,
+				strings.ReplaceAll(string(msg), "\n", ""),
 			}
 		}
 	}
-	echoHandler := func(ws *webs.Conn) {
-		defer ws.Close()
-    log.Print(ws.Request().Header.Values("Sec-Websocket-Protocol"))
-		var msg string
+	echoHandler := func(ws *webs.Conn, r *http.Request) {
+		defer ws.Close(webs.StatusNormalClosure, "")
 		for {
-			if err := webs.Message.Receive(ws, &msg); err != nil {
-				if err.Error() != "EOR" {
-					printErr(err, false)
-				}
-				return
-			} else if err = webs.Message.Send(ws, msg); err != nil {
-				printErr(err, false)
-				return
-			}
+      if mt, msg, err := ws.Read(context.Background()); err != nil {
+        if !errors.Is(err, io.EOF) && !isGotClose(err) {
+          printErr(err, false)
+        }
+        return
+      } else if err := ws.Write(context.Background(), mt, msg); err != nil {
+        printErr(err, false)
+        return
+      }
 		}
 	}
 	if hub {
@@ -54,11 +65,11 @@ func wsServer(hub bool) {
 		go func() {
 			for msg := range hubChan {
 				bmsg, _ := json.Marshal(msg)
-				smsg := string(append(bmsg, '\n'))
+        bmsg = append(bmsg, '\n')
 				conns.Range(func(iAddr, iConn interface{}) bool {
 					a, ws := iAddr.(string), iConn.(*webs.Conn)
 					if a != msg.From {
-						webs.Message.Send(ws, smsg)
+            ws.Write(context.Background(), webs.MessageText, bmsg)
 					}
 					return true
 				})
@@ -69,18 +80,21 @@ func wsServer(hub bool) {
 		Addr: addr,
 		Handler: func() *http.ServeMux {
 			r := http.NewServeMux()
-      wsSrvr := &webs.Server{
-        Handshake: func(config *webs.Config, r *http.Request) error {
-          config.Protocol = []string{}
-          return nil
-        },
-      }
+      var handler func(*webs.Conn, *http.Request)
 			if hub {
-				wsSrvr.Handler = webs.Handler(hubHandler)
+				handler = hubHandler
 			} else {
-				wsSrvr.Handler = webs.Handler(echoHandler)
+				handler = echoHandler
 			}
-      r.Handle("/", wsSrvr)
+      opts := &webs.AcceptOptions{
+        InsecureSkipVerify: true,
+      }
+      r.HandleFunc("/", func(w http.ResponseWriter, r *http.Request) {
+        conn, err := webs.Accept(w, r, opts)
+        if err == nil {
+          handler(conn, r)
+        }
+      })
 			return r
 		}(),
 		ErrorLog: log.New(cerr, "Error: ", 0),
