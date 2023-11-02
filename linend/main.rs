@@ -1,5 +1,5 @@
-use std::io::{prelude::*, BufReader};
 use std::fs;
+use std::io::{prelude::*, BufReader};
 
 fn main() {
     let args = std::env::args().skip(1).collect::<Vec<_>>();
@@ -24,8 +24,10 @@ fn main() {
         }
         i += 1;
     };
-    let infile = fs::File::open(&fname).unwrap_or_else(|e| die(format!("error opening file: {}", e)));
-    let mut outfile = fs::File::create(&tmp_fname).unwrap_or_else(|e| die(format!("error creating temp file: {}", e)));
+    let infile =
+        fs::File::open(&fname).unwrap_or_else(|e| die(format!("error opening file: {}", e)));
+    let mut outfile = fs::File::create(&tmp_fname)
+        .unwrap_or_else(|e| die(format!("error creating temp file: {}", e)));
     for line in BufReader::new(infile).lines() {
         let line = match line {
             Ok(line) => line,

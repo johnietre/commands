@@ -1,6 +1,0 @@
-{
-  "serverAddr": "127.0.0.1:8000",
-  "outDir": "",
-  "env": ["TESTENV=YES", "TESTENV2=NO"],
-  "procs": []
-}

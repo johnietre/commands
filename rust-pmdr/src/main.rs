@@ -1,6 +1,6 @@
+use rodio::{source::Source, Decoder, OutputStream};
 use std::file::File;
-use std::io::{BufReader, stdio};
-use rodio::{Decoder, OutputStream, source::Source};
+use std::io::{stdio, BufReader};
 
 fn main() {
     let (_, stream_handle) = OutputStream::try_default().unwrap();

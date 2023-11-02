@@ -184,7 +184,7 @@ dependencies = [
 ]
 
 [[package]]
-name = "rust-run"
+name = "run"
 version = "0.1.0"
 dependencies = [
  "clap",

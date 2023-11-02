@@ -13,7 +13,7 @@ fn main() {
             Ok(res) => println!("{}", res),
             Err(e) => eprintln!("{}", e),
         }
-        return
+        return;
     }
     for line in stdin().lock().lines() {
         let line = match line {
@@ -45,8 +45,8 @@ impl<T> Parser<T> {}
 
 impl Parser<f64> {
     fn eval(expr: &str) -> Result<f64, Box<dyn std::error::Error>> {
-        use Token::*;
         use Operator::*;
+        use Token::*;
         let mut op_stack: LinkedList<Operator> = LinkedList::new();
         let mut out_queue: LinkedList<Token<f64>> = LinkedList::new();
         let mut start = usize::MAX;
@@ -68,20 +68,24 @@ impl Parser<f64> {
                             prev = b;
                             continue;
                         }
-                        return Err(
-                            format!(
-                                r#"bad expression at position {}: "{}""#, i + 1, b as char,
-                            ).into(),
-                        );
+                        return Err(format!(
+                            r#"bad expression at position {}: "{}""#,
+                            i + 1,
+                            b as char,
+                        )
+                        .into());
                     }
                     if start != usize::MAX {
                         let v = match parse_num(&expr[start..i]) {
                             Some(v) => v,
-                            None => return Err(
-                                format!(
-                                    r#"bad number at position {}: "{}""#, i + 1, b as char,
-                                ).into(),
-                            ),
+                            None => {
+                                return Err(format!(
+                                    r#"bad number at position {}: "{}""#,
+                                    i + 1,
+                                    b as char,
+                                )
+                                .into())
+                            }
                         };
                         out_queue.push_back(Value(v));
                         if neg {
@@ -105,11 +109,14 @@ impl Parser<f64> {
                     if start != usize::MAX {
                         let v = match parse_num(&expr[start..i]) {
                             Some(v) => v,
-                            None => return Err(
-                                format!(
-                                    r#"bad number at position {}: "{}""#, i + 1, b as char,
-                                ).into(),
-                            ),
+                            None => {
+                                return Err(format!(
+                                    r#"bad number at position {}: "{}""#,
+                                    i + 1,
+                                    b as char,
+                                )
+                                .into())
+                            }
                         };
                         start = usize::MAX;
                         out_queue.push_back(Value(v));
@@ -134,31 +141,30 @@ impl Parser<f64> {
                 }
                 b')' => {
                     if parens == 0 {
-                        return Err(
-                            format!("unmatched parenthesis at position: {}", i + 1).into(),
-                        );
+                        return Err(format!("unmatched parenthesis at position: {}", i + 1).into());
                     }
                     parens -= 1;
                     if start == usize::MAX {
                         if prev == b'(' {
-                            return Err(
-                                format!("don't put empty parentheses").into(),
-                            );
+                            return Err(format!("don't put empty parentheses").into());
                         } else if prev != b')' {
-                            return Err(
-                                format!(
-                                    r#"bad expression at position {}: "{}""#, i, prev as char,
-                                ).into(),
-                            );
+                            return Err(format!(
+                                r#"bad expression at position {}: "{}""#,
+                                i, prev as char,
+                            )
+                            .into());
                         }
                     }
                     let v = match parse_num(&expr[start..i]) {
                         Some(v) => v,
-                        None => return Err(
-                            format!(
-                                r#"bad number at position {}: "{}""#, i + 1, b as char,
-                            ).into(),
-                        ),
+                        None => {
+                            return Err(format!(
+                                r#"bad number at position {}: "{}""#,
+                                i + 1,
+                                b as char,
+                            )
+                            .into())
+                        }
                     };
                     start = usize::MAX;
                     out_queue.push_back(Value(v));
@@ -183,11 +189,14 @@ impl Parser<f64> {
                     if start != usize::MAX {
                         let v = match parse_num(&expr[start..i]) {
                             Some(v) => v,
-                            None => return Err(
-                                format!(
-                                    r#"bad number at position {}: "{}""#, i + 1, b as char,
-                                ).into(),
-                            ),
+                            None => {
+                                return Err(format!(
+                                    r#"bad number at position {}: "{}""#,
+                                    i + 1,
+                                    b as char,
+                                )
+                                .into())
+                            }
                         };
                         out_queue.push_back(Value(v));
                         start = usize::MAX;
@@ -217,9 +226,9 @@ impl Parser<f64> {
         if start != usize::MAX {
             let v = match parse_num(&expr[start..]) {
                 Some(v) => v,
-                None => return Err(
-                    format!(r"bad number at or after position {}", start + 1).into(),
-                ),
+                None => {
+                    return Err(format!(r"bad number at or after position {}", start + 1).into())
+                }
             };
             out_queue.push_back(Value(v));
             if neg {
@@ -242,7 +251,8 @@ impl Parser<f64> {
                 }
             }
             if let Op(op) = cur.current().copied().unwrap() {
-                cur.remove_current(); cur.move_prev();
+                cur.remove_current();
+                cur.move_prev();
                 let n = op.num_args();
                 let mut args = vec![0.0; n];
                 for i in 0..n {
@@ -398,8 +408,10 @@ impl PartialOrd for Operator {
 }
 
 fn print_help() {
-    println!("\
+    println!(
+        "\
     +: addition, -: subtraction, *: multiplication, /: division\n\
     ^: power, !: factorial\
-    ");
+    "
+    );
 }

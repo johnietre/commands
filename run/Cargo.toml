@@ -1,15 +1,11 @@
 [package]
-name = "rust-run"
+name = "run"
 version = "0.1.0"
 edition = "2021"
 
 [[bin]]
-name = "rust-run"
+name = "run"
 path = "src/main.rs"
-
-[[bin]]
-name = "term-test"
-path = "other/main.rs"
 
 # See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
 
