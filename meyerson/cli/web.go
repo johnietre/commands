@@ -178,6 +178,7 @@ WsLoop:
 		case ActionAdd:
 			//resp := Message{}
 			errStr := ""
+		ActionAddLoop:
 			for _, proc := range msg.Processes {
 				if proc.Name == "" {
 					errStr += "missing process name" + "\n"
@@ -185,6 +186,12 @@ WsLoop:
 				} else if proc.Program == "" {
 					errStr += proc.Name + ": missing program" + "\n"
 					continue
+				}
+				for _, pair := range proc.Env {
+					if pair != "" && !strings.Contains(pair, "=") {
+						errStr += proc.Name + ": invalid environment variable key-value pair: " + pair + "\n"
+						continue ActionAddLoop
+					}
 				}
 				app.AddProc(proc)
 				// TODO: Use startProc?

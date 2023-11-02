@@ -71,6 +71,13 @@ const App = {
       this.proc = newProc();
     },
     addProc() {
+      for (var i in proc.env) {
+        const pair = proc.env[i];
+        if (pair != "" && pair.indexOf("=") == -1) {
+          alert(`Envvar #${i + 1}: expected format of KEY=VALUE, got ${pair}`);
+          return;
+        }
+      }
       this.sendMsg(newMsgProc(Action.Add, this.proc));
       this.clearProc();
       this.editing = false;

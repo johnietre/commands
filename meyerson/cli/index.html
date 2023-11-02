@@ -56,7 +56,7 @@
         </div>
 
         <div>
-          <p style="margin:none">Env:</p>
+          <p style="margin:none">Env (KEY=VALUE):</p>
           <button @click="proc.env.push('')">New Envvar</button>
           <div v-for="(env, i) in proc.env">
             <input type="text" v-model="proc.env[i]" />
