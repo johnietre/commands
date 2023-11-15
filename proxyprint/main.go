@@ -357,7 +357,7 @@ func doPrintFunc(b []byte, from, to string) {
 			"-------------------\n"+
 			"%s\n"+
 			"===================\n",
-		from, to, len(b), string(b),
+		from, to, len(b), b,
 	)
 }
 
@@ -367,7 +367,7 @@ func bytesPrintFunc(b []byte, from, to string) {
 			"-------------------\n"+
 			"%v\n"+
 			"===================\n",
-		from, to, len(b), string(b),
+		from, to, len(b), b,
 	)
 }
 
@@ -377,7 +377,7 @@ func lowerHexBytesPrintFunc(b []byte, from, to string) {
 			"-------------------\n"+
 			"%x\n"+
 			"===================\n",
-		from, to, len(b), string(b),
+		from, to, len(b), b,
 	)
 }
 
@@ -387,7 +387,7 @@ func upperHexBytesPrintFunc(b []byte, from, to string) {
 			"-------------------\n"+
 			"%X\n"+
 			"===================\n",
-		from, to, len(b), string(b),
+		from, to, len(b), b,
 	)
 }
 

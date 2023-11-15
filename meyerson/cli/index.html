@@ -115,7 +115,20 @@
           <br />
           Args:<br />{{proc.args}}
           <br />
-          Env:<br />{{proc.env}}
+          <div v-if="proc.showingEnv==1">
+            <span @click="proc.showingEnv=2">Env</span>:<br />{{proc.env}}
+          </div>
+          <div v-else-if="proc.showingEnv==2">
+            <span @click="proc.showingEnv=0">Env</span>:<br />
+            <div class="env-div">
+              <p v-for="ev in proc.env">
+              {{ev}}
+              </p>
+            </div>
+          </div>
+          <div v-else>
+            <span @click="proc.showingEnv=1">Env</span>:<br />
+          </div>
           <br />
           <a 
             v-if="proc.outFilename" target="_blank" :href="`/stdout/${proc.num}`"
@@ -125,7 +138,40 @@
             v-if="proc.errFilename" target="_blank" :href="`/stderr/${proc.num}`"
             >Stderr: {{proc.errFilename}}</a>
           </p>
-          <button @click="delProc(proc.num)">Delete</button>
+          <div class="buttons-div">
+            <div>
+              <button
+                @click="startProc(proc.num)"
+                :disabled="proc.status==Status.Running"
+              >Start</button>
+            </div>
+            <div>
+              <button 
+                @click="interruptProc(proc.num)"
+                :disabled="proc.status!=Status.Running"
+                >Interrupt</button>
+              <button
+                @click="killProc(proc.num)"
+                :disabled="proc.status!=Status.Running"
+              >Kill</button>
+            </div>
+            <!--
+            <div>
+              <button
+                @click="interruptRestartProc(proc.num)"
+                :disabled="proc.status!=Status.Running"
+                >Interrupt-Restart</button>
+              <button
+                @click="killRestartProc(proc.num)"
+                :disabled="proc.status!=Status.Running"
+              >Kill-Restart</button>
+            </div>
+            -->
+            <div>
+              <button @click="cloneProc(proc)">Clone</button>
+              <button @click="delProc(proc.num)">Delete</button>
+            </div>
+          </div>
         </details>
       </div>
     </div>

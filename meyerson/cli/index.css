@@ -6,6 +6,27 @@
   height: 2px;
 }
 
+.buttons-div {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+}
+
+.buttons-div > div {
+  margin: 2px;
+  width: 100%;
+}
+
+.buttons-div > div > button {
+  margin: 0px 1px 0px 1px;
+}
+
+.env-div {
+  height: 200px;
+  resize: vertical;
+  overflow: auto;
+}
+
 #app {
   display: flex;
   flex-direction: column;

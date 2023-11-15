@@ -61,7 +61,8 @@ const App = {
 
       detailsShowing : false,
 
-      ws : ws
+      ws : ws,
+      Status: Status
     };
   },
 
@@ -82,7 +83,27 @@ const App = {
       this.clearProc();
       this.editing = false;
     },
+    startProc(num) {
+      this.sendMsg(newMsg(Action.Start, num));
+    },
+    interruptProc(num) {
+      this.sendMsg(newMsg(Action.Interrupt, num));
+    },
+    killProc(num) {
+      this.sendMsg(newMsg(Action.Kill, num));
+    },
+    interruptRestartProc(num) {
+      this.sendMsg(newMsg(Action.InterruptRestart, num));
+    },
+    killRestartProc(num) {
+      this.sendMsg(newMsg(Action.KillRestart, num));
+    },
     delProc(num) { this.sendMsg(newMsg(Action.Del, num)); },
+    cloneProc(proc) {
+      Object.assign(this.proc, proc);
+      delete this.proc.num;
+      this.editing = true;
+    },
     clearProc() { this.proc = newProc(); },
     getGlobalEnv() { this.sendMsg(newMsg(Action.Env)); },
     refreshProcs() { this.sendMsg(newMsg(Action.Refresh)); },

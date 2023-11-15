@@ -1,5 +1,7 @@
 package cli
 
+// TODO: Test *Restart actions
+
 import (
 	"context"
 	"encoding/json"
@@ -150,11 +152,11 @@ func stderrHandler(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	proc.procMtx.RLock()
-	if proc.OutFilename == "" || proc.outFile == nil {
+	if proc.ErrFilename == "" || proc.errFile == nil {
 		w.Write([]byte(`<p style="color:red">Process stderr not captured</p>`))
 		return
 	}
-	name := proc.outFile.Name()
+	name := proc.errFile.Name()
 	proc.procMtx.RUnlock()
 	http.ServeFile(w, r, name)
 }
@@ -257,9 +259,11 @@ WsLoop:
 		case ActionKill:
 			killProcMsg(ws, msg, false)
 		case ActionInterruptRestart:
-			interruptProcMsg(ws, msg, true)
+			sendErr(ws, "not implemented")
+			//interruptProcMsg(ws, msg, true)
 		case ActionKillRestart:
-			killProcMsg(ws, msg, true)
+			sendErr(ws, "not implemented")
+			//killProcMsg(ws, msg, true)
 		case ActionRefresh:
 			if msg.Content == nil {
 				if bytes, err := app.refreshProcsJSON(); err != nil {

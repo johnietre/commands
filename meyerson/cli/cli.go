@@ -1,6 +1,8 @@
 package cli
 
 // TODO: Make it so output files can't be overwritten?
+// TODO: Make it so the output file names can incorporate the special values,
+// e.g., -.log for stderr is process1-stderr.log
 
 import (
 	"bufio"
@@ -21,10 +23,12 @@ import (
 	"sync/atomic"
 	"syscall"
 	"time"
+
+	"github.com/BurntSushi/toml"
 )
 
 var (
-	app            = &App{nextProcNum: 1}
+	app            = NewApp()
 	errProcRunning = fmt.Errorf("process running already")
 )
 
@@ -32,8 +36,9 @@ func Run(args []string) {
 	log.SetFlags(0)
 
 	fs := flag.NewFlagSet("meyerson cli", flag.ExitOnError)
-	outDir := fs.String("out-dir", ".", "Directory to put output files in")
+	outDir := fs.String("out-dir", "", "Directory to put output files in")
 	configPath := fs.String("config", "", "Path to config file")
+	shortConfigPath := fs.String("c", "", "Same as --config")
 	configTemp := fs.Bool(
 		"config-template", false,
 		"Generate a template config file in the current directory",
@@ -50,11 +55,31 @@ func Run(args []string) {
 		"b", false,
 		"Generate a template config file without comments in the current directory (same as bare-config-template)",
 	)
+	configTomlTemp := fs.Bool(
+		"config-toml-template", false,
+		"Generate a template config file in the current directory",
+	)
+	shortConfigTomlTemp := fs.Bool(
+		"T", false,
+		"Generate a template config file in the current directory (same as config-template)",
+	)
+	bareConfigTomlTemp := fs.Bool(
+		"bare-config-toml-template", false,
+		"Generate a template config file without comments in the current directory",
+	)
+	shortBareConfigTomlTemp := fs.Bool(
+		"B", false,
+		"Generate a template config file without comments in the current directory (same as bare-config-template)",
+	)
 	addr := fs.String(
 		"addr", "",
 		"Address to run server on, if passed, overriding config file serverAddr",
 	)
 	fs.Parse(args)
+
+	if *configPath == "" {
+		*configPath = *shortConfigPath
+	}
 
 	intChan := make(chan os.Signal, 1)
 	go func() {
@@ -120,17 +145,52 @@ func Run(args []string) {
 			log.Fatal("error writing config template: ", err)
 		}
 		return
+	} else if *configTomlTemp || *shortConfigTomlTemp {
+		_, thisFile, _, _ := runtime.Caller(0)
+		configPath := filepath.Join(
+			filepath.Dir(thisFile), "meyerson-comments.toml",
+		)
+		data, err := os.ReadFile(configPath)
+		if err != nil {
+			log.Fatal("error reading config template: ", err)
+		}
+		if err = os.WriteFile("meyerson.toml", data, 0666); err != nil {
+			log.Fatal("error writing config template: ", err)
+		}
+		return
+	} else if *bareConfigTomlTemp || *shortBareConfigTomlTemp {
+		_, thisFile, _, _ := runtime.Caller(0)
+		configPath := filepath.Join(filepath.Dir(thisFile), "meyerson.toml")
+		data, err := os.ReadFile(configPath)
+		if err != nil {
+			log.Fatal("error reading config template: ", err)
+		}
+		if err = os.WriteFile("meyerson.toml", data, 0666); err != nil {
+			log.Fatal("error writing config template: ", err)
+		}
+		return
 	}
 
 	if *configPath != "" {
-		f, err := os.Open(*configPath)
-		if err != nil {
-			log.Fatal("error opening config file: ", err)
-		}
+		ext := filepath.Ext(*configPath)
 		config := &Config{}
-		if err = json.NewDecoder(f).Decode(config); err != nil {
+		switch ext {
+		case ".json":
+			f, err := os.Open(*configPath)
+			if err != nil {
+				log.Fatal("error opening config file: ", err)
+			}
+			err = json.NewDecoder(f).Decode(config)
 			f.Close()
-			log.Fatal("error parsing config file: ", err)
+			if err != nil {
+				log.Fatal("error parsing config file: ", err)
+			}
+		case ".toml":
+			if _, err := toml.DecodeFile(*configPath, config); err != nil {
+				log.Fatal("error parsing config file: ", err)
+			}
+		default:
+			log.Fatal("invalid config file, expected .json or .toml file")
 		}
 		if *addr != "" {
 			config.ServerAddr = *addr
@@ -188,7 +248,7 @@ func Run(args []string) {
 	Println("Starting (remaining) processes...")
 	app.StartProcs()
 	if *addr != "" {
-		fmt.Println("Starting server on ", *addr)
+		fmt.Println("Starting server on", *addr)
 		RunWeb(*addr)
 	}
 	handleInput()
@@ -299,7 +359,7 @@ InputLoop:
 					if err := RunWeb(addr); err != nil {
 						fmt.Println(err)
 					} else {
-						fmt.Println("Starting server on ", addr)
+						fmt.Println("Starting server on", addr)
 					}
 				case 10:
 					if !confirm("Close server immediately [Y/n]?") {
@@ -487,10 +547,10 @@ func startProc(proc *Process) error {
 }
 
 type Config struct {
-	ServerAddr string     `json:"serverAddr,omitempty"`
-	OutDir     string     `json:"outDir,omitempty"`
-	Env        []string   `json:"env,omitempty"`
-	Procs      []*Process `json:"procs,omitempty"`
+	ServerAddr string     `json:"serverAddr,omitempty" toml:"server-addr"`
+	OutDir     string     `json:"outDir,omitempty" toml:"out-dir"`
+	Env        []string   `json:"env,omitempty" toml:"env"`
+	Procs      []*Process `json:"procs,omitempty" toml:"proc"`
 }
 
 type App struct {
@@ -503,20 +563,17 @@ type App struct {
 	wg          sync.WaitGroup
 }
 
+func NewApp() *App {
+	return &App{env: os.Environ(), nextProcNum: 1}
+}
+
 func AppFromConfig(config *Config) *App {
-	app := &App{
-		procs:       config.Procs,
-		env:         config.Env,
-		outDir:      config.OutDir,
-		nextProcNum: 1,
-	}
-	env := append(os.Environ(), app.env...)
-	for i, proc := range app.procs {
-		proc.Num = i + 1
-		proc.app = app
-		procEnv := make([]string, len(env), len(env)+len(proc.Env))
-		copy(procEnv, env)
-		proc.Env = append(procEnv, proc.Env...)
+	app := NewApp()
+	app.env = append(app.env, config.Env...)
+	app.outDir = config.OutDir
+	app.nextProcNum = 1
+	for _, proc := range config.Procs {
+		app.AddProc(proc)
 	}
 	if config.ServerAddr != "" {
 		fmt.Println("Starting server on ", config.ServerAddr)
@@ -526,9 +583,9 @@ func AppFromConfig(config *Config) *App {
 }
 
 func (a *App) AddProc(p *Process) {
-	env := make([]string, len(p.Env), len(p.Env)+len(a.env))
-	copy(env, p.Env)
-	p.Env = append(env, a.env...)
+	env := make([]string, len(a.env), len(a.env)+len(p.Env))
+	copy(env, a.env)
+	p.Env = append(env, p.Env...)
 	p.app = a
 	a.procsMtx.Lock()
 	p.Num = a.nextProcNum
@@ -626,15 +683,16 @@ func (a *App) refreshProcsJSON() ([]byte, error) {
 }
 
 type Process struct {
-	Name        string        `json:"name"`
-	Program     string        `json:"program"`
-	Args        []string      `json:"args,omitempty"`
-	Env         []string      `json:"env,omitempty"`
-	OutFilename string        `json:"outFilename,omitempty"`
-	ErrFilename string        `json:"errFilename,omitempty"`
-	Delay       time.Duration `json:"delay,omitempty"`
-	Dir         string        `json:"dir,omitempty"`
-	Num         int           `json:"num"`
+	Name        string        `json:"name" toml:"name"`
+	Program     string        `json:"program" toml:"program"`
+	Args        []string      `json:"args,omitempty" toml:"args"`
+	Env         []string      `json:"env,omitempty" toml:"env"`
+	OutFilename string        `json:"outFilename,omitempty" toml:"out-filename"`
+	ErrFilename string        `json:"errFilename,omitempty" toml:"err-filename"`
+	Delay       time.Duration `json:"delay,omitempty" toml:"delay"`
+	// TODO: use
+	Dir string `json:"dir,omitempty" toml:"dir"`
+	Num int    `json:"num" toml:"-"`
 
 	app              *App
 	cmd              *exec.Cmd
@@ -768,9 +826,10 @@ StartProc:
 
 func (p *Process) Wait() {
 	err := p.cmd.Wait()
-	p.status.Store(statusFinished)
-	notify(Message{Action: ActionFinished, Content: p.Num}) // TODO
-	if err != nil {
+	alreadyDone := p.status.Swap(statusFinished) != statusRunning
+	notify(Message{Action: ActionFinished, Content: p.Num})
+	// TODO: Handle error better to ignore when the user stops the program
+	if err != nil && !alreadyDone {
 		Printf("%s terminated with error: %v\n", p.Name, err)
 	} else {
 		Println(p.Name, "finished")
