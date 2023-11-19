@@ -11,6 +11,8 @@ A set of Unix command-line tools/applications
 - A tool to log things throughout the day
 # dotodo
 - A todo list
+# fmtme
+- Format files
 # finfo
 - Get some basic file/directory info
 # finances
