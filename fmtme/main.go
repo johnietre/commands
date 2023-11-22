@@ -5,14 +5,31 @@ package main
 import (
 	//"encoding/json"
 	"flag"
+	"fmt"
 	"log"
 	"os"
 	"os/exec"
 	"path/filepath"
+	"strings"
 )
+
+var (
+	quiet = true
+)
+
+func printlnFunc(args ...any) {
+	if !quiet {
+		fmt.Println(args...)
+	}
+}
 
 func main() {
 	log.SetFlags(0)
+
+	flag.BoolVar(
+		&quiet, "q", false,
+		"Quiet (only display errors and output from commands)",
+	)
 	flag.Parse()
 
 	files := flag.Args()
@@ -33,8 +50,10 @@ func main() {
 		case ".rs":
 			cmd = makeCmd("rustfmt", append([]string{"--edition=2021"}, files...)...)
 		default:
-			log.Println("Unsupported filetype:", ft)
+			log.Printf("Unsupported filetype: %q (files: %v)", ft, files)
+			continue
 		}
+		printlnFunc("Running:", strings.Join(cmd.Args, " "))
 		if err := cmd.Run(); err != nil {
 			log.Printf("Error running command for filetype %s: %v", ft, err)
 		}
