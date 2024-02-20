@@ -61,10 +61,13 @@ pwdstore: bin
 
 run: bin
 	#g++ run/cpp/main.cpp -Wall -o bin/run -std=gnu++17
-	cd run && cargo build --release --bin run && mv target/release/run ../bin/run
+	cargo build --release --manifest-path=run/Cargo.toml --bin run && \
+		mv run/target/release/run ../bin/run
 
 search: bin
-	go build -o bin/search ./search
+	#go build -o bin/search ./search
+	cargo build --release --manifest-path=search/Cargo.toml && \
+		mv search/target/release/search ../bin/search
 
 sock: bin
 	go build -o bin/sock ./sock

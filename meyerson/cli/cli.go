@@ -61,7 +61,7 @@ func Run(args []string) {
 	)
 	shortConfigTomlTemp := fs.Bool(
 		"T", false,
-		"Generate a template config file in the current directory (same as config-template)",
+		"Generate a template config file in the current directory (same as config-toml-template)",
 	)
 	bareConfigTomlTemp := fs.Bool(
 		"bare-config-toml-template", false,
@@ -69,7 +69,7 @@ func Run(args []string) {
 	)
 	shortBareConfigTomlTemp := fs.Bool(
 		"B", false,
-		"Generate a template config file without comments in the current directory (same as bare-config-template)",
+		"Generate a template config file without comments in the current directory (same as bare-config-toml-template)",
 	)
 	addr := fs.String(
 		"addr", "",
