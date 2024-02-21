@@ -35,6 +35,19 @@ struct App {
 impl App {
     fn new(mut args: Args) -> Res<Arc<Self>> {
         let mut what = std::mem::replace(&mut args.what, String::new());
+        if what.starts_with('\\') {
+            let mut remove = false;
+            for c in what.chars().skip(1) {
+                if c == '-' {
+                    remove = true;
+                } else if c != '\\' {
+                    break;
+                }
+            }
+            if remove {
+                what = what.split_off(1);
+            }
+        }
         if args.insensitive {
             what.make_ascii_lowercase();
         }
@@ -411,7 +424,9 @@ impl What {
 #[derive(Parser, Debug)]
 #[command(about, long_about = None)]
 struct Args {
-    /// What to search for
+    /// What to search for. Prefix with '\' if it starts with a '-' and yoou don't want it to be
+    /// treated as a flag. Only works when '-' is only preceded by '\'s (i.e., "\--help" becomes
+    /// "--help" and "\\--help" becomes "\--help" internally)
     what: String,
 
     /// Search file contents
