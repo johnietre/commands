@@ -727,20 +727,7 @@ impl Line {
 // Returns true if successful
 unsafe fn set_term(stdin_fd: RawFd, deferrer: &mut Deferrer) -> bool {
     // Get the old terminal and create the new
-    let mut old_term = libc::termios {
-        c_iflag: 0,
-        c_oflag: 0,
-        c_cflag: 0,
-        c_lflag: 0,
-        c_line: 0,
-        // TODO: Check
-        #[cfg(target_os = "linux")]
-        c_cc: [0; 32],
-        #[cfg(target_os = "macos")]
-        c_cc: [0; 20],
-        c_ispeed: 0,
-        c_ospeed: 0,
-    };
+    let mut old_term = std::mem::MaybeUninit::<libc::termios>::zeroed().assume_init();
     if libc::tcgetattr(stdin_fd, (&mut old_term) as *mut _) != 0 {
         eprintln!("error getting terminal info");
         //std::process::exit(1);
