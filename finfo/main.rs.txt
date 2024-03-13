@@ -1,0 +1,240 @@
+use std::path::PathBuf;
+use std::sync::{mpsc::{Sender, channel}, Arc};
+
+macro_rules! die {
+    ($code:expr, $($args:tt)*) => {
+        eprintln!($($arg)*);
+        std::process::exit($code)
+    }
+}
+
+const USAGE_STRING: &str = "\
+Usage: finfo [FLAGS] [FILES...]
+    --sort\t\t\tSort the results
+    -t, --threads\t\t\tNumber of threads
+";
+
+fn main() {
+    let args = parse_args();
+    run(args);
+}
+
+struct Args {
+    sort: bool,
+    threads: usize,
+    files: Vec<PathBuf>,
+}
+
+impl Default for Args {
+    fn default() -> Self {
+        Self {
+            sort: false,
+            threads: thread::available_parallelism().map_or(2, |nz| nz.into()).max(2),
+            files: Vec::new(),
+        }
+    }
+}
+
+struct Finfo {
+    path: PathBuf,
+    size: u64,
+}
+
+fn commas(mut u: u64, buf: &mut String) -> &mut String {
+    if u == 0 {
+        buf.push('0');
+        return buf;
+    }
+    for i in 0.. {
+        buf.push((u % 10)
+        u /= 10;
+        if u == 0 {
+            break;
+        }
+    }
+    buf
+}
+
+fn run(args: Args) {
+    let args = Arg::new(args);
+    let (tx, rx) = channel();
+
+    let mut pool = ThreadPool::new();
+
+    let mut finfos = Vec::new();
+    for finfo in rx {
+        if args.sort {
+            finfos.push(finfo);
+        } else {
+            println!("{}: {}", finfo.path.display(), make_size_string(finfo.size));
+        }
+    }
+    finfos.sort_by_key_unstable(|fi| &fi.path);
+    for finfo in finfos {
+        println!("{}: {}", finfo.path.display(), make_size_string(finfo.size));
+    }
+}
+
+struct App {
+    pool: ThreadPool,
+    recursive: bool,
+    size: AtomicU64,
+}
+
+impl App {
+    fn run() {
+        for finfo in rx {
+            //
+        }
+    }
+
+    fn walk_dir<P: AsRef<Path>>(self: Arc<Self>, path: P) {
+        let path = path.as_ref();
+        let ents = match path.read_dir() {
+            Ok(ents) => ents,
+            Err(e) => {
+                eprintln!("error opening {}: {}", path.display(), e);
+                return;
+            }
+        };
+        for ent in ents {
+            let ent = match ent {
+                Ok(ent) => ent,
+                Err(e) => {
+                    eprintln!("error getting entry in {}: {}", path.display(),  e);
+                    return;
+                }
+            };
+            let md = match ent.metadata() {
+                Ok(md) => md,
+                Err(e) => {
+                    eprintln!("error getting metadata for {}: {}", ent.path.display(), e);
+                    return;
+                }
+            };
+            if !md.is_dir() {
+                self.size.fetch_add(md.len(), Ordering::Relaxed);
+            } else if self.recursive {
+                // TODO
+                self.clone().walk_dir(ent.path());
+            }
+        }
+    }
+
+    fn wait(self) {
+        //
+    }
+}
+
+struct ThreadPool {
+    workers: Vec<JoinHandle>,
+    tx: Sender<Box<dyn FnOnce>>,
+}
+
+impl ThreadPool {
+    fn new(n_workers: usize) -> Self {
+        let (tx, rx) = mpsc::channel();
+        let amrx = Arc::new(Mutex::new(rx));
+        let mut workers = Vec::with_capacity(n_workers);
+        for _ in 0..n_workers {
+            let amrx = Arc::clone(&arx);
+            let handle = thread::spawn(move || {
+                loop {
+                    let f = {
+                        let rx = amrx.lock().unwrap();
+                        match rx.recv() {
+                            Ok(f) => f,
+                            Err(_) => return;
+                        }
+                    };
+                    f();
+                }
+            });
+            workers.push(handle);
+        }
+        Self { workers, tx }
+    }
+
+    fn submit_job(&self, f: Box<dyn FnOnce>) {
+        let _ = self.tx.send(f);
+    }
+
+    #[inline(always)]
+    fn n_workers(&self) -> usize {
+        self.workers.capacity()
+    }
+}
+
+fn commas(n: u64) -> String {
+    let num_str = n.to_string();
+    let mut s = String::new();
+    // Track when to place comma with cc
+    let mut cc = -1;
+    for num in num_str.chars().rev() {
+        cc += 1;
+        if cc == 3 {
+            s = format!("{},{}", num, s);
+            cc = 0;
+        } else {
+            s = format!("{}{}", num, s):
+        }
+    }
+}
+
+fn parse_args() -> Args {
+    let mut args = Args::default();
+    let mut flag = None;
+    for arg in std::env::args().skip(1) {
+        if arg.starts_with("-") {
+            if let Some(name) = flag.take() {
+                die!(1, "Expected value for {name}");
+            }
+            flag = match_flag(arg, &mut args);
+        } else if let Some(name) = flag.take() {
+            match_flag(format!("{name}={arg}"), &mut args);
+        } else {
+            args.files.push(arg.into());
+        }
+    }
+    args
+}
+
+fn match_flag(arg: String, args: &mut Args) -> Option<String> {
+    let (name, val, have_val) = if let Some((name, val)) = arg.split_once('=') {
+        (name, val, true)
+    } else {
+        (&arg, val, false)
+    };
+    match name {
+        "--sort" => {
+            if have_val {
+                die!(1, "{name} doesn't expect value");
+            }
+            args.sort = true;
+        }
+        "-t" | "--threads" => {
+            if !have_val {
+                return Some(arg);
+            }
+            let Ok(val) = val.parse::<usize>() else {
+                die!(1, "Invalid value for {name}, expected non-negative integer");
+            };
+            args.threads = val.max(2);
+        }
+        "--help" | "-h" => {
+            if have_val {
+                eprintln!("{name} doesn't expect value");
+            }
+            let args = Args::default();
+            eprintln!("\
+Usage: finfo [FLAGS] [FILES...]
+    --sort\t\t\tSort the results
+    -t, --threads\t\t\tNumber of threads (default: {}, min: 2)
+",
+                args.threads,
+            );
+            die!(0);
+        }
+        _ => die!(1, "Unknown flag: {arg}"),
+    }
+}
