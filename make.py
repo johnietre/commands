@@ -143,6 +143,10 @@ def make_jtcmd_sock():
     if not should_build("bin/sock", ["sock/main.go"]): return
     run_commands(Cmd("go build -o bin/sock ./sock"))
 
+def make_jtcmd_start():
+    if not should_build("bin/start", ["start/main.go"]): return
+    run_commands(Cmd("go build -o bin/start ./start"))
+
 def make_jtcmd_srvr():
     if not should_build("bin/srvr", ["srvr/main.go"]): return
     run_commands(Cmd("go build -o bin/srvr ./srvr"))
