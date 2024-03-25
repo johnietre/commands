@@ -1,13 +1,14 @@
 // TODO: replace file names
 // TODO: Count occurrences of file name matches
 // TODO: Handle InvalidData errors
+// TODO: When cleaning cargo, it's possible a file is removed, then attempted to be accessed.
 use clap::Parser;
 use crossbeam::channel::{unbounded, Receiver, Sender};
 use regex::Regex;
 use std::fs;
-use std::io::{prelude::*, BufReader, BufWriter, ErrorKind};
+use std::io::{prelude::*, stderr, BufReader, BufWriter, ErrorKind};
 use std::path::{Path, PathBuf};
-use std::process::exit;
+use std::process::{exit, Command};
 use std::sync::Arc;
 use std::thread;
 
@@ -189,6 +190,32 @@ impl App {
                 continue;
             };
             let full_path = path.join(name);
+            if self.args.cargo_clean {
+                if let Some(full_path) = full_path.to_str() {
+                    if name == "Cargo.toml" {
+                        let res = Command::new("cargo")
+                            .args(["clean", "--manifest-path", full_path])
+                            .output();
+                        match res {
+                            Ok(out) => {
+                                if !out.status.success() {
+                                    let sep = "=".repeat(40);
+                                    let mut stderr = stderr().lock();
+                                    write!(stderr, "{sep}\nERROR CLEANING: {}\n\n", path.display())
+                                        .expect("error writing to stderr");
+                                    stderr.write(&out.stderr).expect("error writing to stderr");
+                                    write!(stderr, "\n{sep}\n").expect("error writing to stderr");
+                                } else {
+                                    println!("CLEANED: {}", path.display());
+                                }
+                            }
+                            Err(e) => {
+                                eprintln!("{}: error cleaning cargo dir: {e}", path.display());
+                            }
+                        }
+                    }
+                }
+            }
             if self.args.content && !ftype.is_dir() {
                 self.search_file(full_path, results_tx);
                 continue;
@@ -477,6 +504,10 @@ struct Args {
     /// Number of threads to use
     #[arg(short, long, default_value_t = num_cpus::get())]
     threads: usize,
+
+    /// Find matching Cargo.toml files and clean the directories
+    #[arg(long = "cargo-clean")]
+    cargo_clean: bool,
 
     /// Files/directories to search
     paths: Vec<PathBuf>,
