@@ -5,7 +5,9 @@ go 1.18
 require (
 	github.com/BurntSushi/toml v1.3.2
 	github.com/google/uuid v1.3.0
+	github.com/johnietre/utils/go v0.0.0-20240421061507-ea56616211cd
 	github.com/mattn/go-sqlite3 v1.14.9
+	github.com/spf13/cobra v1.8.0
 	golang.org/x/crypto v0.7.0
 	golang.org/x/net v0.8.0
 	golang.org/x/term v0.6.0
@@ -13,6 +15,8 @@ require (
 )
 
 require (
+	github.com/inconshreveable/mousetrap v1.1.0 // indirect
 	github.com/klauspost/compress v1.10.3 // indirect
+	github.com/spf13/pflag v1.0.5 // indirect
 	golang.org/x/sys v0.6.0 // indirect
 )
