@@ -21,7 +21,7 @@ func main() {
 				addr = "127.0.0.1:8000"
 			}
 
-			fmt.Printf("Serving %s on %s\n", addr, dir)
+			fmt.Printf("Serving %s on %s\n", dir, addr)
 			err := http.ListenAndServe(addr, http.FileServer(http.Dir(dir)))
 			if err != nil {
 				log.Fatal(err)

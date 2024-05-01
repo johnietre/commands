@@ -154,6 +154,7 @@ func makeInstallCmd() *cobra.Command {
 				installPath := filepath.Join(path, installFileName)
 				if err := newCmd("sh", installPath).Run(); err != nil {
 					fmt.Printf("Error running install script for %s: %v\n", path, err)
+					return
 				}
 				fmt.Println("INSTALLED")
 			})
@@ -189,10 +190,12 @@ func makeUninstallCmd() *cobra.Command {
 					fmt.Println("no uninstall script, just deleting binary...")
 					if err := os.Remove(filepath.Join(binDir, name)); err != nil {
 						fmt.Printf("Error removing %s binary: %v\n", name, err)
+						return
 					}
 				} else {
 					if err := newCmd("sh", uninstallPath).Run(); err != nil {
 						fmt.Printf("Error running uninstall script for %s: %v\n", path, err)
+						return
 					}
 				}
 				fmt.Println("UNINSTALLED")
@@ -286,5 +289,6 @@ func loopThru(args []string, f func(path string)) {
 func newCmd(prog string, args ...string) *exec.Cmd {
 	cmd := exec.Command(prog, args...)
 	cmd.Stdin, cmd.Stdout, cmd.Stderr = os.Stdin, os.Stdout, os.Stderr
+	cmd.Dir = cmdsDir
 	return cmd
 }
