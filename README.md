@@ -53,9 +53,14 @@ A set of Unix command-line tools/applications
 - A tool to fix/update .proto files
 
 # TODO
+
+## jtcmds
+- [ ] Clean build dirs
+
 ## meyerson
 - [ ] Allow output filenames to be specified during process creation
     - Take "-" as input to mean default name and nothing to mean no output
 - [ ] Allow processes to be started immediately after creation
+
 ## run
 - [ ] Add rust edition flag automatically (e.g., --edition=2021)
