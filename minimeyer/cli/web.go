@@ -22,6 +22,7 @@ import (
 )
 
 var (
+	webPassword *string
 	srvr        = &http.Server{}
 	srvrRunning atomic.Bool
 	conns       sync.Map
@@ -90,6 +91,11 @@ func ShutdownWeb(ctx context.Context) error {
 }
 
 func homeHandler(w http.ResponseWriter, r *http.Request) {
+	path := r.URL.Path
+	if path != "" && path != "/" {
+		http.Error(w, "not found", http.StatusNotFound)
+		return
+	}
 	http.ServeFile(w, r, indexPath)
 }
 
@@ -163,6 +169,26 @@ func stderrHandler(w http.ResponseWriter, r *http.Request) {
 
 func wsHandler(ws *webs.Conn) {
 	defer ws.Close()
+
+	if webPassword != nil {
+		webs.JSON.Send(ws, Message{Action: ActionPassword})
+		for {
+			var msg Message
+			if err := webs.JSON.Receive(ws, &msg); err != nil {
+				return
+			}
+			if pwd, ok := msg.Content.(string); ok && pwd == *webPassword {
+				break
+			} else {
+			}
+			webs.JSON.Send(ws, Message{
+				Action: ActionPassword,
+				Error:  "Invalid Password",
+			})
+		}
+	}
+	webs.JSON.Send(ws, Message{Action: ActionConnected})
+
 	conns.Store(ws.Request().RemoteAddr, ws)
 	defer conns.Delete(ws.Request().RemoteAddr)
 	d := json.NewDecoder(ws)
@@ -426,6 +452,11 @@ func NewMessageProc(action string, proc *Process) Message {
 
 const (
 	// FROM CLIENT:
+	// Not sent by client
+	// FROM SERVER:
+	// Send when messages are ready to be exchanged.
+	ActionConnected = "connected"
+	// FROM CLIENT:
 	// Processes field should be populated
 	// Server will start all processes sent.
 	// FROM SERVER:
@@ -475,10 +506,15 @@ const (
 	// sent.
 	ActionRefresh = "refresh"
 	// FROM CLIENT:
-	// Nothing should be populated
+	// Nothing should be populated.
 	// FROM SERVER:
 	// Contents populated with array of strings of environment variables.
 	ActionEnv = "env"
+	// FROM CLIENT:
+	// The password attempt.
+	// FROM SERVER:
+	// Whether a password is required and/or if it's invalid.
+	ActionPassword = "password"
 	// FROM CLIENT:
 	// Not sent by client.
 	// FROM SERVER:

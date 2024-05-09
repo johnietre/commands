@@ -104,8 +104,8 @@ func (a *Article) download() error {
 }
 
 const (
-  articlesDir = ".articles"
-  articlesFile = "articles.json"
+	articlesDir  = ".articles"
+	articlesFile = "articles.json"
 )
 
 var (
@@ -142,7 +142,7 @@ func main() {
 	fmt.Println()
 
 	// Open the file
-  fileName := path.Join(os.Getenv("HOME"), articlesDir, articlesFile)
+	fileName := path.Join(os.Getenv("HOME"), articlesDir, articlesFile)
 	f, err := os.OpenFile(
 		fileName,
 		os.O_CREATE|os.O_RDONLY,

@@ -94,8 +94,8 @@ func main() {
 		} else if *(boolFlags["-v"]) {
 			editor = "vim"
 		} else if *(boolFlags["-nv"]) {
-      editor = "nvim"
-    }
+			editor = "nvim"
+		}
 	}
 
 	// Create the file(s)
@@ -152,8 +152,8 @@ func createFile(filepath string, boolFlags map[string]*bool) error {
 	}
 	// Set the replace variable
 	switch filetype {
-  case "erl":
-    replace = name
+	case "erl":
+		replace = name
 	case "f":
 		replace = strings.ToLower(name)
 	case "h":

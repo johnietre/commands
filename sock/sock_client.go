@@ -37,5 +37,5 @@ func socketClient() {
 			}
 		}
 	}()
-  <-make(chan struct{})
+	<-make(chan struct{})
 }

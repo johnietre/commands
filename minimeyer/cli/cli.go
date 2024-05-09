@@ -8,7 +8,6 @@ import (
 	"bufio"
 	"context"
 	"encoding/json"
-	"flag"
 	"fmt"
 	"io"
 	"log"
@@ -25,6 +24,7 @@ import (
 	"time"
 
 	"github.com/BurntSushi/toml"
+	"github.com/spf13/cobra"
 )
 
 var (
@@ -32,53 +32,68 @@ var (
 	errProcRunning = fmt.Errorf("process running already")
 )
 
-func Run(args []string) {
-	log.SetFlags(0)
-
-	fs := flag.NewFlagSet("meyerson cli", flag.ExitOnError)
-	outDir := fs.String("out-dir", "", "Directory to put output files in")
-	configPath := fs.String("config", "", "Path to config file")
-	shortConfigPath := fs.String("c", "", "Same as --config")
-	configTemp := fs.Bool(
-		"config-template", false,
+func NewCliCmd() *cobra.Command {
+	cliCmd := &cobra.Command{
+		Use:   "cli",
+		Short: "Run CLI",
+		Long:  "Run CLI ().",
+		Run:   Run,
+		Args:  cobra.ExactArgs(0),
+	}
+	flags := cliCmd.Flags()
+	flags.StringP("out-dir", "o", "", "Directory to put output files in")
+	flags.StringP("config", "c", "", "Path to config file")
+	flags.BoolP(
+		"config-template", "t", false,
 		"Generate a template config file in the current directory",
 	)
-	shortConfigTemp := fs.Bool(
-		"t", false,
-		"Generate a template config file in the current directory (same as config-template)",
-	)
-	bareConfigTemp := fs.Bool(
-		"bare-config-template", false,
+	flags.BoolP(
+		"bare-config-template", "b", false,
 		"Generate a template config file without comments in the current directory",
 	)
-	shortBareConfigTemp := fs.Bool(
-		"b", false,
-		"Generate a template config file without comments in the current directory (same as bare-config-template)",
-	)
-	configTomlTemp := fs.Bool(
-		"config-toml-template", false,
+	flags.BoolP(
+		"config-toml-template", "T", false,
 		"Generate a template config file in the current directory",
 	)
-	shortConfigTomlTemp := fs.Bool(
-		"T", false,
-		"Generate a template config file in the current directory (same as config-toml-template)",
-	)
-	bareConfigTomlTemp := fs.Bool(
-		"bare-config-toml-template", false,
+	flags.BoolP(
+		"bare-config-toml-template", "B", false,
 		"Generate a template config file without comments in the current directory",
 	)
-	shortBareConfigTomlTemp := fs.Bool(
-		"B", false,
-		"Generate a template config file without comments in the current directory (same as bare-config-toml-template)",
-	)
-	addr := fs.String(
+	flags.String(
 		"addr", "",
 		"Address to run server on, if passed, overriding config file serverAddr",
 	)
-	fs.Parse(args)
+	flags.Bool(
+		"no-cli", false,
+		"Run without starting the CLI for procs (must have an address to run on)",
+	)
+	flags.Bool(
+		"web-password", false,
+		"Run web with password (use MINIMEYER_PASSWORD envvar to set password)",
+	)
 
-	if *configPath == "" {
-		*configPath = *shortConfigPath
+	return cliCmd
+}
+
+func Run(cmd *cobra.Command, args []string) {
+	log.SetFlags(0)
+
+	flags := cmd.Flags()
+	outDir, _ := flags.GetString("out-dir")
+	configPath, _ := flags.GetString("config")
+	configTemp, _ := flags.GetBool("config-template")
+	bareConfigTemp, _ := flags.GetBool("bare-config-template")
+	configTomlTemp, _ := flags.GetBool("config-toml-template")
+	bareConfigTomlTemp, _ := flags.GetBool("bare-config-toml-template")
+	addr, _ := flags.GetString("addr")
+	noCli, _ := flags.GetBool("no-cli")
+	if b, _ := flags.GetBool("web-password"); b {
+		pwd := os.Getenv("MINIMEYER_PASSWORD")
+		webPassword = &pwd
+	}
+
+	if noCli && addr == "" {
+		log.Fatal(`Must provide "addr" with "no-cli"`)
 	}
 
 	intChan := make(chan os.Signal, 1)
@@ -121,7 +136,7 @@ func Run(args []string) {
 	}()
 	signal.Notify(termChan, syscall.SIGTERM)
 
-	if *configTemp || *shortConfigTemp {
+	if configTemp {
 		_, thisFile, _, _ := runtime.Caller(0)
 		configPath := filepath.Join(
 			filepath.Dir(thisFile), "meyerson-comments.json",
@@ -134,7 +149,7 @@ func Run(args []string) {
 			log.Fatal("error writing config template: ", err)
 		}
 		return
-	} else if *bareConfigTemp || *shortBareConfigTemp {
+	} else if bareConfigTemp {
 		_, thisFile, _, _ := runtime.Caller(0)
 		configPath := filepath.Join(filepath.Dir(thisFile), "meyerson.json")
 		data, err := os.ReadFile(configPath)
@@ -145,7 +160,7 @@ func Run(args []string) {
 			log.Fatal("error writing config template: ", err)
 		}
 		return
-	} else if *configTomlTemp || *shortConfigTomlTemp {
+	} else if configTomlTemp {
 		_, thisFile, _, _ := runtime.Caller(0)
 		configPath := filepath.Join(
 			filepath.Dir(thisFile), "meyerson-comments.toml",
@@ -158,7 +173,7 @@ func Run(args []string) {
 			log.Fatal("error writing config template: ", err)
 		}
 		return
-	} else if *bareConfigTomlTemp || *shortBareConfigTomlTemp {
+	} else if bareConfigTomlTemp {
 		_, thisFile, _, _ := runtime.Caller(0)
 		configPath := filepath.Join(filepath.Dir(thisFile), "meyerson.toml")
 		data, err := os.ReadFile(configPath)
@@ -171,12 +186,12 @@ func Run(args []string) {
 		return
 	}
 
-	if *configPath != "" {
-		ext := filepath.Ext(*configPath)
+	if configPath != "" {
+		ext := filepath.Ext(configPath)
 		config := &Config{}
 		switch ext {
 		case ".json":
-			f, err := os.Open(*configPath)
+			f, err := os.Open(configPath)
 			if err != nil {
 				log.Fatal("error opening config file: ", err)
 			}
@@ -186,18 +201,18 @@ func Run(args []string) {
 				log.Fatal("error parsing config file: ", err)
 			}
 		case ".toml":
-			if _, err := toml.DecodeFile(*configPath, config); err != nil {
+			if _, err := toml.DecodeFile(configPath, config); err != nil {
 				log.Fatal("error parsing config file: ", err)
 			}
 		default:
 			log.Fatal("invalid config file, expected .json or .toml file")
 		}
-		if *addr != "" {
-			config.ServerAddr = *addr
+		if addr != "" {
+			config.ServerAddr = addr
 		}
 		app = AppFromConfig(config)
-		if *outDir != "" {
-			app.outDir = *outDir
+		if outDir != "" {
+			app.outDir = outDir
 		}
 		if len(app.procs) != 0 {
 			Println("Starting processes...")
@@ -208,48 +223,50 @@ func Run(args []string) {
 		return
 	}
 
-	app.outDir = *outDir
+	app.outDir = outDir
 
-	// Create the processes
-	for i := 1; true; {
-		proc, stop := getProcessFromStdin(i)
-		if stop {
-			break
-		} else if proc == nil {
-			continue
+	if !noCli {
+		// Create the processes
+		for i := 1; true; {
+			proc, stop := getProcessFromStdin(i)
+			if stop {
+				break
+			} else if proc == nil {
+				continue
+			}
+			app.AddProc(proc)
+
+			if confirm("Start now [Y/n]? ") {
+				Printf("Starting process %d (%s)\n", proc.Num, proc.Name)
+				if err := proc.Start(); err != nil {
+					Printf(
+						"Error starting process %d (%s): %v\n", proc.Num, proc.Name, err,
+					)
+				}
+			}
+
+			Println("====================")
+			i++
 		}
-		app.AddProc(proc)
+		Println("========================================")
 
-		if confirm("Start now [Y/n]? ") {
-			Printf("Starting process %d (%s)\n", proc.Num, proc.Name)
-			if err := proc.Start(); err != nil {
-				Printf(
-					"Error starting process %d (%s): %v\n", proc.Num, proc.Name, err,
-				)
+		// Check for any deletions
+		for {
+			if name := readline("Delete any procs (enter name)? "); name == "" {
+				break
+			} else if !app.RemoveProc(name) {
+				Println("No process with name: ", name)
 			}
 		}
+		Println("========================================")
 
-		Println("====================")
-		i++
+		// Start the processes and server, if necessary
+		Println("Starting (remaining) processes...")
+		app.StartProcs()
 	}
-	Println("========================================")
-
-	// Check for any deletions
-	for {
-		if name := readline("Delete any procs (enter name)? "); name == "" {
-			break
-		} else if !app.RemoveProc(name) {
-			Println("No process with name: ", name)
-		}
-	}
-	Println("========================================")
-
-	// Start the processes and server, if necessary
-	Println("Starting (remaining) processes...")
-	app.StartProcs()
-	if *addr != "" {
-		fmt.Println("Starting server on", *addr)
-		RunWeb(*addr)
+	if addr != "" {
+		fmt.Println("Starting server on", addr)
+		RunWeb(addr)
 	}
 	handleInput()
 	app.Wait()

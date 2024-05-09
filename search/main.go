@@ -12,7 +12,7 @@ import (
 	"bytes"
 	"flag"
 	"fmt"
-  "io"
+	"io"
 	"io/ioutil"
 	"log"
 	"os"
@@ -33,9 +33,9 @@ var (
 	flags          = make(map[byte]bool)
 	ignoredFiles   = map[string]bool{
 		".apng": true, ".avif": true, ".bmp": true, ".cur": true,
-    ".dat": true, ".db": true, ".docx": true, ".exe": true, ".gif": true, ".ico": true,
+		".dat": true, ".db": true, ".docx": true, ".exe": true, ".gif": true, ".ico": true,
 		".jfif": true, ".jpeg": true, ".jpg": true, ".pjpeg": true,
-    ".pjp": true, ".png": true, ".pdf": true, ".sqlite": true, ".svg": true,
+		".pjp": true, ".png": true, ".pdf": true, ".sqlite": true, ".svg": true,
 		".tif": true, ".tiff": true, ".webp": true, ".xlsx": true,
 	}
 )
@@ -52,7 +52,7 @@ func main() {
 	flagSet.Bool("m", false, "Mute non-fatal errors")
 	flagSet.Bool("n", false, "Count the number of occurrences")
 	flagSet.Bool("x", false, "Use regex")
-  flagSet.Bool("l", false, "Print line numbers of occurrences")
+	flagSet.Bool("l", false, "Print line numbers of occurrences")
 	replaceWithPtr = flagSet.String("p", "", "String to replace the \"what\" with")
 	flagSet.Usage = func() {
 		fmt.Fprintf(
@@ -98,19 +98,19 @@ func main() {
 	// The statement to match against
 	regexStmt := what
 	if !flags['x'] {
-    regexStmt = regexp.QuoteMeta(regexStmt)
+		regexStmt = regexp.QuoteMeta(regexStmt)
 	}
 	if flags['i'] {
 		regexStmt = "(?i)" + regexStmt
 	}
-  var err error
-  if rexpr, err = regexp.Compile(regexStmt); err != nil {
+	var err error
+	if rexpr, err = regexp.Compile(regexStmt); err != nil {
 		log.Fatal(err)
 	}
 
-  if flags['m'] {
-    log.SetOutput(io.Discard)
-  }
+	if flags['m'] {
+		log.SetOutput(io.Discard)
+	}
 
 	// Loop through the "wheres"
 	for _, where := range wheres {
@@ -249,11 +249,11 @@ func searchFile(filepath string, checkIfExec bool) {
 		log.Printf("%v", err)
 	}
 	if len(linenos) != 0 {
-    if flags['l'] {
-		  foundChan <- fmt.Sprintf("%s:%s", filepath, strings.Join(linenos, ","))
-    } else {
-		  foundChan <- fmt.Sprintf("%s", filepath)
-    }
+		if flags['l'] {
+			foundChan <- fmt.Sprintf("%s:%s", filepath, strings.Join(linenos, ","))
+		} else {
+			foundChan <- fmt.Sprintf("%s", filepath)
+		}
 	}
 }
 
@@ -268,14 +268,14 @@ func searchFileContents(f *os.File) (linenos []string, err error) {
 			if err.Error() != "EOF" {
 				return
 			}
-      err = nil
+			err = nil
 			return
 		}
 		if isMatch(strings.TrimSpace(line)) {
 			linenos = append(linenos, fmt.Sprintf("%d", lineno))
-      if !flags['l'] {
-        return
-      }
+			if !flags['l'] {
+				return
+			}
 		}
 	}
 	return

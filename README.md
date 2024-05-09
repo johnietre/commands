@@ -25,7 +25,7 @@ A set of Unix command-line tools/applications
 - Change line endings
 # math
 - A math expression evaluator
-# meyerson
+# minimeyer
 - A simple web-based process manager (with a simple CLI implementation as well)
 # nuid
 - Hasher, encoder, and UUID generator

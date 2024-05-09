@@ -2,7 +2,6 @@ package main
 
 import (
 	"encoding/json"
-	"flag"
 	"fmt"
 	"log"
 	"net/http"
@@ -15,7 +14,8 @@ import (
 	"sync"
 	"sync/atomic"
 
-	"github.com/johnietre/commands/meyerson/cli"
+	"github.com/johnietre/commands/minimeyer/cli"
+	"github.com/spf13/cobra"
 	webs "golang.org/x/net/websocket"
 )
 
@@ -46,24 +46,26 @@ func main() {
 	log.SetFlags(0)
 
 	// Run the CLI
-	if len(os.Args) != 1 && os.Args[1] == "cli" {
-		cli.Run(os.Args[2:])
-		return
+	rootCmd := &cobra.Command{
+		Use:   "minimeyer",
+		Short: "Process manager",
+		Run: func(cmd *cobra.Command, args []string) {
+			configPath, _ := cmd.Flags().GetString("config")
+			run(configPath)
+		},
 	}
-
-	usage := flag.CommandLine.Usage
-	flag.CommandLine.Usage = func() {
-		usage()
-		out := flag.CommandLine.Output()
-		fmt.Fprint(out, "Commands:\n")
-		fmt.Fprintln(out, "  cli\tRun CLI")
+	flags := rootCmd.Flags()
+	rootCmd.AddCommand(cli.NewCliCmd())
+	flags.StringVar(&addr, "addr", "127.0.0.1:3350", "Address to run on")
+	flags.String("config", "", "Config to load")
+	if err := rootCmd.Execute(); err != nil {
+		os.Exit(0)
 	}
-	flag.StringVar(&addr, "addr", "127.0.0.1:3350", "Address to run server on")
-	configPath := flag.String("config", "", "Config to load")
-	flag.Parse()
+}
 
-	if *configPath != "" {
-		config, err := loadConfig(*configPath)
+func run(configPath string) {
+	if configPath != "" {
+		config, err := loadConfig(configPath)
 		if err != nil {
 			log.Fatal("error loading config: ", err)
 		}

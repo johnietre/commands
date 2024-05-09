@@ -1,4 +1,5 @@
 class Action {
+  static Connected = "connected";
   static Add = "add";
   static Start = "start";
   static Finished = "finished";
@@ -9,6 +10,7 @@ class Action {
   static KillRestart = "kill-restart";
   static Refresh = "refresh";
   static Env = "env";
+  static Password = "password";
   static Error = "error";
 };
 class Status {
@@ -38,12 +40,22 @@ function newMsgProc(action, proc) {
 
 const App = {
   data() {
-    const url = new URL("/ws", document.location.origin);
-    url.protocol = "ws";
+    const url = new URL(document.location.origin);
+    if (!url.pathname.endsWith("/")) {
+      url.pathname += "/";
+    }
+    url.pathname += "ws";
+    if (url.protocol === "https") {
+      url.protocol = "wss";
+    } else {
+      url.protocol = "ws";
+    }
     const ws = new WebSocket(url.toString());
     ws.onopen = () => {
+      /*
       this.refreshProcs();
       this.getGlobalEnv();
+      */
     };
     ws.onmessage = this.msgHandler;
     ws.onerror = this.errHandler;
@@ -72,8 +84,8 @@ const App = {
       this.proc = newProc();
     },
     addProc() {
-      for (var i in proc.env) {
-        const pair = proc.env[i];
+      for (var i in this.proc.env) {
+        const pair = this.proc.env[i];
         if (pair != "" && pair.indexOf("=") == -1) {
           alert(`Envvar #${i + 1}: expected format of KEY=VALUE, got ${pair}`);
           return;
@@ -123,6 +135,17 @@ const App = {
         return;
       };
       switch (msg.action) {
+      case Action.Connected:
+        this.refreshProcs();
+        this.getGlobalEnv();
+        break;
+      case Action.Password:
+        let pwd;
+        if (msg.error !== undefined) {
+        }
+        pwd = prompt("Password:");
+        this.sendMsg(newMsg(Action.Password, pwd));
+        break;
       case Action.Add:
         for (var proc of msg.processes) {
           this.procs.push(proc);

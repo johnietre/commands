@@ -48,6 +48,6 @@ func wsClient(origin string) {
 			}
 		}
 	}()
-  for {
-  }
+	for {
+	}
 }

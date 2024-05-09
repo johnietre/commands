@@ -289,6 +289,7 @@ func loopThru(args []string, f func(path string)) {
 func newCmd(prog string, args ...string) *exec.Cmd {
 	cmd := exec.Command(prog, args...)
 	cmd.Stdin, cmd.Stdout, cmd.Stderr = os.Stdin, os.Stdout, os.Stderr
+	//cmd.Stdin, cmd.Stderr = os.Stdin, os.Stderr
 	cmd.Dir = cmdsDir
 	return cmd
 }

@@ -15,9 +15,9 @@ import (
 )
 
 func isGotClose(err error) bool {
-  return strings.Contains(
-    err.Error(), "failed to get reader: received close frame",
-  )
+	return strings.Contains(
+		err.Error(), "failed to get reader: received close frame",
+	)
 }
 
 func wsServer(hub bool) {
@@ -30,16 +30,16 @@ func wsServer(hub bool) {
 		defer conns.Delete(r.RemoteAddr)
 		conns.Store(r.RemoteAddr, ws)
 		for {
-      mt, msg, err := ws.Read(context.Background())
-      if err != nil {
-        if !errors.Is(err, io.EOF) && !isGotClose(err) {
-          printErr(err, false)
-        }
-        return
-      } else if mt != webs.MessageText {
-        // TODO
-        continue
-      }
+			mt, msg, err := ws.Read(context.Background())
+			if err != nil {
+				if !errors.Is(err, io.EOF) && !isGotClose(err) {
+					printErr(err, false)
+				}
+				return
+			} else if mt != webs.MessageText {
+				// TODO
+				continue
+			}
 			hubChan <- hubMsg{
 				r.RemoteAddr,
 				strings.ReplaceAll(string(msg), "\n", ""),
@@ -49,15 +49,15 @@ func wsServer(hub bool) {
 	echoHandler := func(ws *webs.Conn, r *http.Request) {
 		defer ws.Close(webs.StatusNormalClosure, "")
 		for {
-      if mt, msg, err := ws.Read(context.Background()); err != nil {
-        if !errors.Is(err, io.EOF) && !isGotClose(err) {
-          printErr(err, false)
-        }
-        return
-      } else if err := ws.Write(context.Background(), mt, msg); err != nil {
-        printErr(err, false)
-        return
-      }
+			if mt, msg, err := ws.Read(context.Background()); err != nil {
+				if !errors.Is(err, io.EOF) && !isGotClose(err) {
+					printErr(err, false)
+				}
+				return
+			} else if err := ws.Write(context.Background(), mt, msg); err != nil {
+				printErr(err, false)
+				return
+			}
 		}
 	}
 	if hub {
@@ -65,11 +65,11 @@ func wsServer(hub bool) {
 		go func() {
 			for msg := range hubChan {
 				bmsg, _ := json.Marshal(msg)
-        bmsg = append(bmsg, '\n')
+				bmsg = append(bmsg, '\n')
 				conns.Range(func(iAddr, iConn interface{}) bool {
 					a, ws := iAddr.(string), iConn.(*webs.Conn)
 					if a != msg.From {
-            ws.Write(context.Background(), webs.MessageText, bmsg)
+						ws.Write(context.Background(), webs.MessageText, bmsg)
 					}
 					return true
 				})
@@ -80,21 +80,21 @@ func wsServer(hub bool) {
 		Addr: addr,
 		Handler: func() *http.ServeMux {
 			r := http.NewServeMux()
-      var handler func(*webs.Conn, *http.Request)
+			var handler func(*webs.Conn, *http.Request)
 			if hub {
 				handler = hubHandler
 			} else {
 				handler = echoHandler
 			}
-      opts := &webs.AcceptOptions{
-        InsecureSkipVerify: true,
-      }
-      r.HandleFunc("/", func(w http.ResponseWriter, r *http.Request) {
-        conn, err := webs.Accept(w, r, opts)
-        if err == nil {
-          handler(conn, r)
-        }
-      })
+			opts := &webs.AcceptOptions{
+				InsecureSkipVerify: true,
+			}
+			r.HandleFunc("/", func(w http.ResponseWriter, r *http.Request) {
+				conn, err := webs.Accept(w, r, opts)
+				if err == nil {
+					handler(conn, r)
+				}
+			})
 			return r
 		}(),
 		ErrorLog: log.New(cerr, "Error: ", 0),

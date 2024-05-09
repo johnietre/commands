@@ -3,12 +3,12 @@
 <html lang="en-US">
 
 <head>
-  <title>Meyerson</title>
+  <title>MinMeyer</title>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <script src="https://unpkg.com/vue@3"></script>
   <link rel="stylesheet" href="index.css">
-  <script src="/index.js" defer></script>
+  <script src="index.js" defer></script>
   <!--<script defer>Vue.createApp(app).mount("#app");</script>-->
 </head>
 
@@ -47,8 +47,9 @@
         </div>
 
         <div>
-          <p style="margin:none">Args:</p>
-          <button @click="proc.args.push('')">New Arg</button>
+          <p style="margin:none">
+          Args: <button @click="proc.args.push('')">New Arg</button>
+          </p>
           <div v-for="(arg, i) in proc.args">
             <input type="text" v-model="proc.args[i]" />
             <button @click="proc.args.splice(i, 1)">X</button>
@@ -56,8 +57,9 @@
         </div>
 
         <div>
-          <p style="margin:none">Env (KEY=VALUE):</p>
-          <button @click="proc.env.push('')">New Envvar</button>
+          <p style="margin:none">
+          Env (KEY=VALUE): <button @click="proc.env.push('')">New</button>
+          </p>
           <div v-for="(env, i) in proc.env">
             <input type="text" v-model="proc.env[i]" />
             <button @click="proc.env.splice(i, 1)">X</button>
@@ -85,11 +87,12 @@
         </div>
       </div>
       <div id="global-env-div" style="margin-bottom:5px">
-        <button
-          @click="showingGlobalEnv=!showingGlobalEnv"
-        >Show Global Env</button>
-        <div v-if="showingGlobalEnv">
-          <p v-for="ev in globalEnv">{{ev}}</p>
+        <button @click="showingGlobalEnv=!showingGlobalEnv">
+          <span v-if="showingGlobalEnv">Hide Global Env</span>
+          <span v-else>Show Global Env</span>
+        </button>
+        <div id="showing-global-env-div" v-if="showingGlobalEnv">
+          <p class="global-env-p" v-for="ev in globalEnv">{{ev}}</p>
         </div>
       </div>
       <div id="procs-div">
@@ -115,21 +118,25 @@
           <br />
           Args:<br />{{proc.args}}
           <br />
-          <div v-if="proc.showingEnv==1">
-            <span @click="proc.showingEnv=2">Env</span>:<br />{{proc.env}}
-          </div>
-          <div v-else-if="proc.showingEnv==2">
-            <span @click="proc.showingEnv=0">Env</span>:<br />
-            <div class="env-div">
-              <p v-for="ev in proc.env">
-              {{ev}}
-              </p>
+
+          <div class="proc-env-div">
+            <div v-if="proc.showingEnv==1">
+              <span @click="proc.showingEnv=2">Env</span>:<br />{{proc.env}}
             </div>
+            <div v-else-if="proc.showingEnv==2">
+              <span @click="proc.showingEnv=0">Env</span>:<br />
+              <div class="env-div">
+                <p v-for="ev in proc.env">
+                {{ev}}
+                </p>
+              </div>
+            </div>
+            <div v-else>
+              <span @click="proc.showingEnv=1">Env</span>:<br />
+            </div>
+            <br />
           </div>
-          <div v-else>
-            <span @click="proc.showingEnv=1">Env</span>:<br />
-          </div>
-          <br />
+
           <a 
             v-if="proc.outFilename" target="_blank" :href="`/stdout/${proc.num}`"
             >Stdout: {{proc.outFilename}}</a>
