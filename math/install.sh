@@ -1,3 +1,4 @@
 #!/usr/bin/sh
 
-cd math && cargo build --release && mv target/release/math bin/math
+cargo +nightly build --release --manifest-path=math/Cargo.toml --bin math && \
+  mv math/target/release/math bin/math
