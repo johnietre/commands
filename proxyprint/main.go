@@ -90,13 +90,13 @@ func main() {
 	flag.Var(
 		&clientPrint,
 		"client-print",
-		"Set the client data print (0 = off, 1 = as string, "+
+		"Set the client data print (0 = off*, 1 = as string, "+
 			"2 = as bytes, 3 = as lower hex bytestring, 4 = as upper hex bytestring)",
 	)
 	flag.Var(
 		&serverPrint,
 		"server-print",
-		"Set the server data print (0 = off, 1 = as string, "+
+		"Set the server data print (0 = off*, 1 = as string, "+
 			"2 = as bytes, 3 = as lower hex bytestring, 4 = as upper hex bytestring)",
 	)
 	flag.Uint64Var(

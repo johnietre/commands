@@ -1,3 +1,3 @@
 #!/usr/bin/sh
 
-go build -o bin/meyerson ./meyerson
+go build -o bin/minimeyer ./minimeyer
