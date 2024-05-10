@@ -268,7 +268,14 @@ func Run(cmd *cobra.Command, args []string) {
 		fmt.Println("Starting server on", addr)
 		RunWeb(addr)
 	}
-	handleInput()
+	signalCh := make(chan os.Signal)
+	if !noCli {
+		handleInput()
+		close(signalCh)
+	} else {
+		signal.Notify(signalCh, os.Interrupt)
+	}
+	<-signalCh
 	app.Wait()
 }
 
