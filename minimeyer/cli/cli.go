@@ -595,6 +595,7 @@ type Config struct {
 	ServerAddr string     `json:"serverAddr,omitempty" toml:"server-addr"`
 	OutDir     string     `json:"outDir,omitempty" toml:"out-dir"`
 	Env        []string   `json:"env,omitempty" toml:"env"`
+	ServerName string     `json:"serverName,omitempty" toml:"server-name"`
 	Procs      []*Process `json:"procs,omitempty" toml:"proc"`
 }
 
@@ -619,6 +620,9 @@ func AppFromConfig(config *Config) *App {
 	app.nextProcNum = 1
 	for _, proc := range config.Procs {
 		app.AddProc(proc)
+	}
+	if srvrName != "" {
+		srvrName = config.ServerName
 	}
 	if config.ServerAddr != "" {
 		fmt.Println("Starting server on ", config.ServerAddr)

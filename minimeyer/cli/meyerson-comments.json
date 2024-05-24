@@ -8,6 +8,8 @@
   // Only the first = is used, so this `key=value=1` has a key of "key" and
   // value of "value=1"
   "env": [],
+  // The name to display on the webpage.
+  "serverName": "",
   // The processes
   // Processes are looped through sequentially, so putting a delay on one will
   // cause the others to execute after that delay has passed as well
