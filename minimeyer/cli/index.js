@@ -67,6 +67,7 @@ const App = {
       proc : newProc(""),
       editing : false,
       procs : [],
+      srvrName: "",
 
       globalEnv : [],
       showingGlobalEnv : false,
@@ -136,6 +137,9 @@ const App = {
       };
       switch (msg.action) {
       case Action.Connected:
+        if (this.srvrName === "" && msg.content) {
+          this.srvrName = msg.content;
+        }
         this.refreshProcs();
         this.getGlobalEnv();
         break;

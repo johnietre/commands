@@ -27,20 +27,28 @@ var (
 	srvrRunning atomic.Bool
 	conns       sync.Map
 
+	srvrName                   string
 	indexPath, jsPath, cssPath string
 
 	errSrvrRunning    = fmt.Errorf("Server running already")
 	errSrvrNotRunning = fmt.Errorf("Server not running")
 )
 
-func init() {
+func loadIndexFiles() {
 	_, file, _, _ := runtime.Caller(0)
-	indexPath = filepath.Join(filepath.Dir(file), "index.html")
-	jsPath = filepath.Join(filepath.Dir(file), "index.js")
-	cssPath = filepath.Join(filepath.Dir(file), "index.css")
+	if indexPath == "" {
+		indexPath = filepath.Join(filepath.Dir(file), "index.html")
+	}
+	if jsPath == "" {
+		jsPath = filepath.Join(filepath.Dir(file), "index.js")
+	}
+	if cssPath == "" {
+		cssPath = filepath.Join(filepath.Dir(file), "index.css")
+	}
 }
 
 func newServer(addr string) *http.Server {
+	loadIndexFiles()
 	return &http.Server{
 		Addr: addr,
 		Handler: func() http.Handler {
@@ -68,9 +76,9 @@ func RunWeb(addr string) error {
 		err := srvr.ListenAndServe()
 		srvrRunning.Store(false)
 		if err != nil && err != http.ErrServerClosed {
-			Println("Server stopped with error:", err)
+			Eprintln("Server stopped with error:", err)
 		} else {
-			Println("Server stopped")
+			Eprintln("Server stopped")
 		}
 	}()
 	return nil
@@ -97,6 +105,17 @@ func homeHandler(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	http.ServeFile(w, r, indexPath)
+	/*
+	  t, err := template.ParseFiles(indexPath)
+	  if err != nil {
+	    http.WriteStatus(http.StatusInternalServerError)
+	    Eprintln("Error parsing template:", err)
+	    return
+	  }
+	  if err := t.Execute(w, nil); err != nil {
+	    Eprintln("Error executing template:", err)
+	  }
+	*/
 }
 
 func jsHandler(w http.ResponseWriter, r *http.Request) {
@@ -187,7 +206,10 @@ func wsHandler(ws *webs.Conn) {
 			})
 		}
 	}
-	webs.JSON.Send(ws, Message{Action: ActionConnected})
+	webs.JSON.Send(ws, Message{
+		Action:  ActionConnected,
+		Content: srvrName,
+	})
 
 	conns.Store(ws.Request().RemoteAddr, ws)
 	defer conns.Delete(ws.Request().RemoteAddr)
@@ -232,7 +254,8 @@ WsLoop:
 			if l := len(errStr); l != 0 {
 				//resp.Error = errStr[:l-1]
 				sendErr(ws, errStr[:l-1])
-				fmt.Print(errStr)
+				Eprint(errStr)
+				//fmt.Print(errStr)
 			}
 			//webs.JSON.Send(ws, msg)
 		case ActionStart:

@@ -3,7 +3,7 @@
 <html lang="en-US">
 
 <head>
-  <title>MinMeyer</title>
+  <title>MiniMeyer</title>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <script src="https://unpkg.com/vue@3"></script>
@@ -14,13 +14,14 @@
 
 <body>
   <div id="app">
-    <h1 class="center-text">Meyerson</h1>
+    <h1 v-if="srvrName===''" class="center-text">MiniMeyer</h1>
+    <h1 v-else class="center-text">MiniMeyer - {{srvrName}}</h1>
 
     <div id="main">
       <details class="center-text">
         <summary>Help</summary>
         <p>
-        <b>Stdout/stderr Filenames</b>
+        <b>Stdout/Stderr Filenames</b>
         <p style="text-align:left">
         <br />
         "-" means the file is named process[num]-std[out/err].txt where [num] is the process number and [out/err] depends on whether the output is stdout or stderr.

@@ -36,7 +36,7 @@ func NewCliCmd() *cobra.Command {
 	cliCmd := &cobra.Command{
 		Use:   "cli",
 		Short: "Run CLI",
-		Long:  "Run CLI ().",
+		Long:  "Run CLI.",
 		Run:   Run,
 		Args:  cobra.ExactArgs(0),
 	}
@@ -71,6 +71,27 @@ func NewCliCmd() *cobra.Command {
 		"web-password", false,
 		"Run web with password (use MINIMEYER_PASSWORD envvar to set password)",
 	)
+	flags.StringVar(
+		&indexPath,
+		"html", "",
+		"Path to index.html; uses default when not set",
+	)
+	flags.StringVar(
+		&jsPath,
+		"js", "",
+		"Path to index.js; uses default when not set",
+	)
+	flags.StringVar(
+		&cssPath,
+		"css", "",
+		"Path to index.css; uses default when not set",
+	)
+	flags.StringVar(
+		&srvrName,
+		"server-name", "",
+		"The name of the web server to display",
+	)
+	cliCmd.MarkFlagsRequiredTogether("html", "js", "css")
 
 	return cliCmd
 }
@@ -939,4 +960,16 @@ func Printf(format string, args ...any) (int, error) {
 
 func Println(args ...any) (int, error) {
 	return fmt.Fprintln(stdout, args...)
+}
+
+func Eprint(args ...any) (int, error) {
+	return fmt.Fprint(stderr, args...)
+}
+
+func Eprintf(format string, args ...any) (int, error) {
+	return fmt.Fprintf(stderr, format, args...)
+}
+
+func Eprintln(args ...any) (int, error) {
+	return fmt.Fprintln(stderr, args...)
 }
