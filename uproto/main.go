@@ -4,11 +4,16 @@ import (
 	"bufio"
 	"flag"
 	"fmt"
-	"io/ioutil"
 	"log"
 	"os"
 	"regexp"
 	"strings"
+	"sync"
+)
+
+var (
+	nameExpr, numExpr *regexp.Regexp
+	wg                sync.WaitGroup
 )
 
 func main() {
@@ -19,31 +24,46 @@ func main() {
 	namePtr := flag.String("name", "", "name of the enum or struct")
 	flag.Parse()
 
-	// Get and open the file passed
 	args := flag.Args()
-	if len(args) != 1 {
-		log.Fatal("Usage: uproto [flags] filename")
-	}
-	filename := args[0]
-	if !strings.HasSuffix(filename, ".proto") {
-		log.Fatal("file must have .proto extension")
-	}
-	// Get the file stat to open with same permissions
-	s, err := os.Stat(filename)
-	if err != nil {
-		log.Fatal(err)
-	}
-	f, err := os.OpenFile(filename, os.O_RDWR, s.Mode())
-	if err != nil {
-		log.Fatal(err)
+	if len(args) == 0 {
+		log.Fatal("Usage: uproto [flags] filenames...")
 	}
 
 	// Create the regular expressions
 	if *namePtr == "" {
 		*namePtr = `\w+`
 	}
-	nameExpr := regexp.MustCompile(fmt.Sprintf("(message|enum) %s {", *namePtr))
-	numExpr := regexp.MustCompile(`(= \d+)`)
+	var err error
+	nameExpr, err = regexp.Compile(fmt.Sprintf("(message|enum) %s {", *namePtr))
+	if err != nil {
+		log.Fatal("Error compiling regex: ", err)
+	}
+	numExpr = regexp.MustCompile(`(= \d+)`)
+
+	// Get and open the files passed
+	for _, filename := range args {
+		if !strings.HasSuffix(filename, ".proto") {
+			log.Printf("%s: file must have .proto extension", filename)
+		}
+		wg.Add(1)
+		go func(filename string) {
+			defer wg.Done()
+			fix(filename)
+		}(filename)
+	}
+	wg.Wait()
+}
+
+func fix(filename string) {
+	// Get the file stat to open with same permissions
+	s, err := os.Stat(filename)
+	if err != nil {
+		log.Printf("%s: %v", filename, err)
+	}
+	f, err := os.OpenFile(filename, os.O_RDWR, s.Mode())
+	if err != nil {
+		log.Printf("%s: %v", filename, err)
+	}
 
 	// Read the file and replace what's necessary
 	reader := bufio.NewReader(f)
@@ -67,7 +87,7 @@ func main() {
 			if err.Error() == "EOF" {
 				break
 			}
-			log.Fatal(err)
+			log.Printf("%s: %v", filename, err)
 		}
 		trimmed := strings.TrimSpace(line)
 		if strings.HasPrefix(trimmed, "//") {
@@ -101,7 +121,7 @@ func main() {
 		newContents += line
 	}
 	// Write the new contents to the file
-	if err := ioutil.WriteFile(filename, []byte(newContents), s.Mode()); err != nil {
-		log.Fatal(err)
+	if err := os.WriteFile(filename, []byte(newContents), s.Mode()); err != nil {
+		log.Printf("%s: %v", filename, err)
 	}
 }
