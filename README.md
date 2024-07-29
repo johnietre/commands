@@ -57,7 +57,7 @@ A set of Unix command-line tools/applications
 ## jtcmds
 - [ ] Clean build dirs
 
-## meyerson
+## Minimeyer
 - [ ] Allow output filenames to be specified during process creation
     - Take "-" as input to mean default name and nothing to mean no output
 - [ ] Allow processes to be started immediately after creation

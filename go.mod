@@ -5,13 +5,13 @@ go 1.18
 require (
 	github.com/BurntSushi/toml v1.3.2
 	github.com/google/uuid v1.3.0
-	github.com/johnietre/utils/go v0.0.0-20240421061507-ea56616211cd
+	github.com/johnietre/utils/go v0.0.0-20240712084910-4fb386379ba6
 	github.com/mattn/go-sqlite3 v1.14.9
 	github.com/spf13/cobra v1.8.0
 	golang.org/x/crypto v0.7.0
 	golang.org/x/net v0.8.0
 	golang.org/x/term v0.6.0
-	nhooyr.io/websocket v1.8.7
+	nhooyr.io/websocket v1.8.11
 )
 
 require (
