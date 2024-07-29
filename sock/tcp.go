@@ -7,13 +7,16 @@ import (
 	"sync"
 )
 
-func socketServer(hub bool) {
+func tcpServer(hub bool) {
 	ln, err := net.Listen("tcp", addr)
 	if err != nil {
 		printErr(err, true)
 		return
 	}
 	defer ln.Close()
+	if testOk {
+		return
+	}
 
 	type hubMsg struct{ From, Msg string }
 	var conns sync.Map
@@ -62,8 +65,8 @@ func socketServer(hub bool) {
 				defer c.Close()
 				defer conns.Delete(c.RemoteAddr().String())
 				conns.Store(c.RemoteAddr().String(), c)
-				var buf [maxBufferSize]byte
 				for {
+					var buf [maxBufferSize]byte
 					if l, err := conn.Read(buf[:]); err != nil {
 						if err.Error() != "EOF" {
 							printErr(err, false)
@@ -79,4 +82,46 @@ func socketServer(hub bool) {
 			}(conn)
 		}
 	}
+}
+
+func tcpClient() {
+	conn, err := net.Dial("tcp", addr)
+	if err != nil {
+		printErr(err, true)
+		return
+	}
+	defer conn.Close()
+	if testOk {
+		return
+	}
+
+	// Get user input
+	go func() {
+		for {
+			if input, err := cin.ReadBytes('\n'); err != nil {
+				if !done {
+					printErr(err, true)
+				}
+				return
+			} else {
+				if _, err = conn.Write(input); err != nil {
+					printErr(err, true)
+					return
+				}
+			}
+		}
+	}()
+	// Get socket output
+	go func() {
+		var buf [maxBufferSize]byte
+		for {
+			if l, err := conn.Read(buf[:]); err != nil {
+				printErr(err, true)
+				return
+			} else {
+				write(cout, "< "+string(buf[:l]), false)
+			}
+		}
+	}()
+	<-make(chan struct{})
 }

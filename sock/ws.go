@@ -6,6 +6,7 @@ import (
 	"errors"
 	"io"
 	"log"
+	"net"
 	"net/http"
 	"strings"
 	"sync"
@@ -77,7 +78,6 @@ func wsServer(hub bool) {
 		}()
 	}
 	server := &http.Server{
-		Addr: addr,
 		Handler: func() *http.ServeMux {
 			r := http.NewServeMux()
 			var handler func(*webs.Conn, *http.Request)
@@ -99,5 +99,68 @@ func wsServer(hub bool) {
 		}(),
 		ErrorLog: log.New(cerr, "Error: ", 0),
 	}
-	printErr(server.ListenAndServe(), true)
+	defer server.Close()
+
+	ln, err := net.Listen("tcp", addr)
+	if err != nil {
+		printErr(err, true)
+		return
+	}
+	if testOk {
+		return
+	}
+
+	printErr(server.Serve(ln), true)
+}
+
+func wsClient(origin string) {
+	/* TODO: Parse origin and addr better */
+	if !strings.HasPrefix(addr, "ws") {
+		addr = "ws://" + addr
+	}
+	if !strings.HasPrefix(origin, "http") {
+		origin = "http://" + origin
+	}
+	ws, _, err := webs.Dial(context.Background(), addr, &webs.DialOptions{
+		Host: origin,
+	})
+	if err != nil {
+		printErr(err, true)
+		return
+	}
+	defer ws.Close(webs.StatusNormalClosure, "")
+	if testOk {
+		return
+	}
+
+	// Get user input
+	go func() {
+		for {
+			if input, err := cin.ReadBytes('\n'); err != nil {
+				if !done {
+					printErr(err, true)
+				}
+				return
+			} else {
+				err := ws.Write(context.Background(), webs.MessageText, input)
+				if err != nil {
+					printErr(err, true)
+					return
+				}
+			}
+		}
+	}()
+	// Get socket output
+	go func() {
+		for {
+			if _, msg, err := ws.Read(context.Background()); err != nil {
+				printErr(err, true)
+				return
+			} else {
+				write(cout, "< "+string(msg), false)
+			}
+		}
+	}()
+	for {
+	}
 }

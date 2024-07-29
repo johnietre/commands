@@ -12,8 +12,10 @@ func main() {
 	log.SetFlags(0)
 
 	rootCmd := &cobra.Command{
-		Use:   "srvr [address to run (default: 127.0.0.1:8000)] [--dir,-d dir]",
-		Short: "Serve a directory on the given address",
+		Use:                   "srvr [address to run (default: 127.0.0.1:8000)] [--dir,-d dir]",
+		Short:                 "Serve a directory on the given address",
+		Args:                  cobra.MaximumNArgs(1),
+		DisableFlagsInUseLine: true,
 		Run: func(cmd *cobra.Command, args []string) {
 			dir := cmd.Flag("dir").Value.String()
 			addr := cmd.Flags().Arg(0)
