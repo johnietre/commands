@@ -59,10 +59,12 @@ func fix(filename string) {
 	s, err := os.Stat(filename)
 	if err != nil {
 		log.Printf("%s: %v", filename, err)
+		return
 	}
 	f, err := os.OpenFile(filename, os.O_RDWR, s.Mode())
 	if err != nil {
 		log.Printf("%s: %v", filename, err)
+		return
 	}
 
 	// Read the file and replace what's necessary
