@@ -2,6 +2,7 @@ package main
 
 import (
 	"bytes"
+	"encoding/json"
 	"errors"
 	"flag"
 	"fmt"
@@ -9,10 +10,14 @@ import (
 	"log"
 	"net"
 	"os"
+	"path/filepath"
 	"strconv"
 	"sync"
 	"syscall"
 	"time"
+
+	utils "github.com/johnietre/utils/go"
+	"github.com/spf13/cobra"
 )
 
 type printStatus int
@@ -28,6 +33,27 @@ func (p *printStatus) Set(s string) error {
 		return fmt.Errorf("invalid value: %d", *p)
 	}
 	return err
+}
+
+func (p printStatus) Type() string {
+	return "PrintStatus"
+}
+
+func (p printStatus) MarshalJSON() ([]byte, error) {
+	return json.Marshal(int(p))
+}
+
+func (p *printStatus) UnmarshalJSON(b []byte) error {
+	i := 0
+	if err := json.Unmarshal(b, &i); err != nil {
+		return err
+	}
+	pi := printStatus(i)
+	if pi < noPrint || pi >= stopValPrint {
+		return fmt.Errorf("invalid value: %d", pi)
+	}
+	*p = pi
+	return nil
 }
 
 func (p printStatus) printFunc() PrintFunc {
@@ -58,8 +84,46 @@ const (
 	stopValPrint // Used for checking if values are in range
 )
 
+type Config struct {
+	Listen        string      `json:"listen,omitempty"`
+	Connect       string      `json:"connect,omitempty"`
+	Tunnel        string      `json:"tunnel,omitempty"`
+	ListenServers string      `json:"listenServers,omitempty"`
+	ClientPrint   printStatus `json:"clientPrint,omitempty"`
+	ServerPrint   printStatus `json:"serverPrint,omitempty"`
+	Buffer        uint64      `json:"buffer,omitempty"`
+	Log           string      `json:"log,omitempty"`
+}
+
+func (c *Config) FillEmptyFrom(other *Config) {
+	if c.Listen == "" {
+		c.Listen = other.Listen
+	}
+	if c.Connect == "" {
+		c.Connect = other.Connect
+	}
+	if c.Tunnel == "" {
+		c.Tunnel = other.Tunnel
+	}
+	if c.ListenServers == "" {
+		c.ListenServers = other.ListenServers
+	}
+	// NOTE: do something else?
+	if c.ClientPrint == noPrint {
+		c.ClientPrint = other.ClientPrint
+	}
+	if c.ServerPrint == noPrint {
+		c.ServerPrint = other.ServerPrint
+	}
+	if c.Buffer == 0 {
+		c.Buffer = other.Buffer
+	}
+	if c.Log == "" {
+		c.Log = other.Log
+	}
+}
+
 var (
-	bufferLen                        uint64
 	clientPrintFunc, serverPrintFunc PrintFunc = noPrintFunc, noPrintFunc
 
 	connectAddr *net.TCPAddr
@@ -69,115 +133,192 @@ var (
 	wg         sync.WaitGroup
 
 	shouldTunnel bool
+
+	config = Config{}
 )
 
 func main() {
 	log.SetFlags(0)
 
-	var clientPrint, serverPrint printStatus = 0, 0
-	listenAddrStr := flag.String("listen", "", "Network address to listen on")
-	connectAddrStr := flag.String("connect", "", "Network address to connect to")
-	tunnelAddrStr := flag.String(
+	cmd := &cobra.Command{
+		Use:                   "proxyprint",
+		Run:                   run,
+		DisableFlagsInUseLine: true,
+	}
+	cmd.AddCommand(&cobra.Command{
+		Use:   "generate",
+		Short: "Generate a blank config file",
+		Long:  "Generate a blank config file to populate. NOTE: the file is generated with mostly invalid values which must be changed or deleted.",
+		Run: func(_ *cobra.Command, args []string) {
+			path := "proxyprint.conf.json"
+			if len(args) > 0 {
+				info, err := os.Stat(args[0])
+				if err != nil && !os.IsNotExist(err) {
+					log.Fatal("error checking output path: ", err)
+				} else if err == nil && info.IsDir() {
+					path = filepath.Join(args[0], path)
+				} else {
+					path = args[0]
+				}
+			}
+			f, err := os.Create(path)
+			if err != nil {
+				log.Fatal("error creating config file: ", err)
+			}
+			defer f.Close()
+			enc := json.NewEncoder(f)
+			enc.SetIndent("", "  ")
+			config := Config{
+				Listen:        "IP:PORT",
+				Connect:       "IP:PORT",
+				Tunnel:        "IP:PORT",
+				ListenServers: "IP:PORT",
+				ClientPrint:   -1,
+				ServerPrint:   -1,
+				Buffer:        1 << 15,
+				Log:           "PATH",
+			}
+			if err := enc.Encode(config); err != nil {
+				log.Fatal("error writing config file: ", err)
+			}
+		},
+	})
+
+	flags := cmd.Flags()
+
+	flags.StringVar(&config.Listen, "listen", "", "Network address to listen on")
+	flags.StringVar(&config.Connect, "connect", "", "Network address to connect to")
+	flags.StringVar(
+		&config.Tunnel,
 		"tunnel",
 		"",
 		"Network address of proxyprint session to tunnel to",
 	)
-	listenSrvrsAddrStr := flag.String(
+	flag.StringVar(
+		&config.ListenServers,
 		"listen-servers",
 		"",
 		"Network address to listen for tunneling servers on",
 	)
-	flag.Var(
-		&clientPrint,
+	flags.Var(
+		&config.ClientPrint,
 		"client-print",
 		"Set the client data print (0 = off*, 1 = as string, "+
 			"2 = as bytes, 3 = as lower hex bytestring, 4 = as upper hex bytestring)",
 	)
-	flag.Var(
-		&serverPrint,
+	flags.Var(
+		&config.ServerPrint,
 		"server-print",
 		"Set the server data print (0 = off*, 1 = as string, "+
 			"2 = as bytes, 3 = as lower hex bytestring, 4 = as upper hex bytestring)",
 	)
-	flag.Uint64Var(
-		&bufferLen,
+	flags.Uint64Var(
+		&config.Buffer,
 		"buffer",
 		1<<15,
 		"Size of the buffer to use to copy data",
 	)
-	logFilePath := flag.String(
-		"log", "", "File to output logs to (blank is command line",
+	flags.StringVar(
+		&config.Log,
+		"log", "", "File to output logs to (blank is command line)",
 	)
-	flag.Parse()
+	flags.String("cfg", "", "Path to config file")
 
-	if *logFilePath != "" {
-		logFile, err := os.OpenFile(
-			*logFilePath, os.O_CREATE|os.O_APPEND|os.O_WRONLY, 0644,
-		)
+	if err := cmd.Execute(); err != nil {
+		log.Fatal(err)
+	}
+}
+
+func run(cmd *cobra.Command, _ []string) {
+	flags := cmd.Flags()
+	cfgPath := utils.Must(flags.GetString("cfg"))
+	if cfgPath != "" {
+		f, err := os.Open(cfgPath)
+		if err != nil {
+			log.Fatal("error opening config file: ", err)
+		}
+		var newCfg Config
+		if err := json.NewDecoder(f).Decode(&newCfg); err != nil {
+			log.Fatal("error parsing config file: ", err)
+		}
+		f.Close()
+		config.FillEmptyFrom(&newCfg)
+	}
+
+	if config.Log != "" {
+		logFile, err := utils.OpenAppend(config.Log)
 		if err != nil {
 			log.Fatalf("error opening log file: %v", err)
 		}
 		log.SetOutput(logFile)
 	}
 
-	if *connectAddrStr != "" {
-		addr, err := net.ResolveTCPAddr("tcp", *connectAddrStr)
+	if config.Connect != "" {
+		addr, err := net.ResolveTCPAddr("tcp", config.Connect)
 		if err != nil {
 			log.Fatal(err)
 		}
 		connectAddr = addr
 	}
 
-	if bufferLen == 0 {
+	if config.Buffer == 0 {
 		log.Fatal("must provide non-zero buffer size")
 	}
 
-	clientPrintFunc = clientPrint.printFunc()
-	serverPrintFunc = serverPrint.printFunc()
+	clientPrintFunc = config.ClientPrint.printFunc()
+	serverPrintFunc = config.ServerPrint.printFunc()
 
-	if *listenAddrStr != "" {
-		if connectAddr == nil && *listenSrvrsAddrStr == "" {
+	startedServer := false
+
+	if config.Listen != "" {
+		if connectAddr == nil && config.ListenServers == "" {
 			log.Fatal("must provide connect addr or listen-servers addr when proxying")
 		}
-		addr, err := net.ResolveTCPAddr("tcp", *listenAddrStr)
+		addr, err := net.ResolveTCPAddr("tcp", config.Listen)
 		if err != nil {
 			log.Fatal(err)
 		}
 		wg.Add(1)
+		startedServer = true
 		go runListenClients(addr)
 	}
 
-	if *listenSrvrsAddrStr != "" {
-		if *listenAddrStr == "" {
+	if config.ListenServers != "" {
+		if config.Listen == "" {
 			log.Fatal("must provide listen addr with listen-servers addr")
 		}
-		addr, err := net.ResolveTCPAddr("tcp", *listenSrvrsAddrStr)
+		addr, err := net.ResolveTCPAddr("tcp", config.ListenServers)
 		if err != nil {
 			log.Fatal(err)
 		}
 		shouldTunnel = true
 		tunnelChan = make(chan *net.TCPConn, 10)
 		wg.Add(1)
+		startedServer = true
 		go runListenServers(addr)
 	}
 
-	if *tunnelAddrStr != "" {
-		if connectAddr == nil && *listenSrvrsAddrStr == "" {
+	if config.Tunnel != "" {
+		if connectAddr == nil && config.ListenServers == "" {
 			log.Fatal("must provide connect addr or listen-servers addr when tunneling")
 		}
-		addr, err := net.ResolveTCPAddr("tcp", *tunnelAddrStr)
+		addr, err := net.ResolveTCPAddr("tcp", config.Tunnel)
 		if err != nil {
 			log.Fatal(err)
 		}
 		wg.Add(1)
+		startedServer = true
 		go runTunneler(addr)
 	}
 
-	if serverPrint+clientPrint != 0 {
+	if config.ServerPrint+config.ClientPrint != 0 {
 		printChan = make(chan string, 50)
 		go listenPrint()
 	}
 
+	if !startedServer {
+		cmd.Usage()
+	}
 	wg.Wait()
 }
 
@@ -330,7 +471,7 @@ func pipe(from, to *net.TCPConn, pf PrintFunc) {
 	defer from.Close()
 	fromAddrStr := from.RemoteAddr().String()
 	toAddrStr := to.RemoteAddr().String()
-	buf := make([]byte, bufferLen)
+	buf := make([]byte, config.Buffer)
 	for {
 		n, err := from.Read(buf[:])
 		if err != nil {
