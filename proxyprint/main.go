@@ -1,10 +1,14 @@
+// TODO: allow printing to files
+// TODO: reuseaddr option
+// TODO: clean shutdown with signal handling and connection tracking
 package main
 
 import (
+	"bufio"
 	"bytes"
+	"encoding/binary"
 	"encoding/json"
 	"errors"
-	"flag"
 	"fmt"
 	"io"
 	"log"
@@ -12,7 +16,9 @@ import (
 	"os"
 	"path/filepath"
 	"strconv"
+	"strings"
 	"sync"
+	"sync/atomic"
 	"syscall"
 	"time"
 
@@ -85,14 +91,18 @@ const (
 )
 
 type Config struct {
-	Listen        string      `json:"listen,omitempty"`
-	Connect       string      `json:"connect,omitempty"`
-	Tunnel        string      `json:"tunnel,omitempty"`
-	ListenServers string      `json:"listenServers,omitempty"`
-	ClientPrint   printStatus `json:"clientPrint,omitempty"`
-	ServerPrint   printStatus `json:"serverPrint,omitempty"`
-	Buffer        uint64      `json:"buffer,omitempty"`
-	Log           string      `json:"log,omitempty"`
+	Listen              string      `json:"listen,omitempty"`
+	Connect             string      `json:"connect,omitempty"`
+	Tunnel              string      `json:"tunnel,omitempty"`
+	ListenServers       string      `json:"listenServers,omitempty"`
+	ClientPrint         printStatus `json:"clientPrint,omitempty"`
+	ServerPrint         printStatus `json:"serverPrint,omitempty"`
+	Buffer              uint64      `json:"buffer,omitempty"`
+	MaxWaitingTunnels   uint        `json:"maxOpenTunnels,omitempty"`
+	MaxAcceptedServers  uint        `json:"maxAcceptedServers,omitempty"`
+	PwdEnvName          string      `json:"pwdEnvName,omitempty"`
+	RequirePwdEnvExists bool        `json:"requirePwdEnvExists,omitempty"`
+	Log                 string      `json:"log,omitempty"`
 }
 
 func (c *Config) FillEmptyFrom(other *Config) {
@@ -118,6 +128,19 @@ func (c *Config) FillEmptyFrom(other *Config) {
 	if c.Buffer == 0 {
 		c.Buffer = other.Buffer
 	}
+	if c.MaxWaitingTunnels == 0 {
+		c.MaxWaitingTunnels = other.MaxWaitingTunnels
+	}
+	if c.MaxAcceptedServers == 0 {
+		c.MaxAcceptedServers = other.MaxAcceptedServers
+	}
+	// NOTE: do something else?
+	if c.PwdEnvName == "" {
+		c.PwdEnvName = other.PwdEnvName
+	}
+	if c.RequirePwdEnvExists == false {
+		c.RequirePwdEnvExists = other.RequirePwdEnvExists
+	}
 	if c.Log == "" {
 		c.Log = other.Log
 	}
@@ -128,20 +151,24 @@ var (
 
 	connectAddr *net.TCPAddr
 
-	printChan  chan string
-	tunnelChan chan *net.TCPConn
-	wg         sync.WaitGroup
+	printChan   chan string
+	tunnelChan  chan *BufferedConn
+	waitingChan chan utils.Unit
+	wg          sync.WaitGroup
 
 	shouldTunnel bool
 
-	config = Config{}
+	config   = Config{}
+	password []byte
 )
 
 func main() {
-	log.SetFlags(0)
+	log.SetFlags(log.LstdFlags)
 
 	cmd := &cobra.Command{
 		Use:                   "proxyprint",
+		Short:                 "Run a proxy which can print out communications in a variety of ways",
+		Long:                  "Run a proxy which can print out communications in a variety of ways. A password can be specified using the PROXYPRINT_PWD environment variable (unless it is set otherwise).",
 		Run:                   run,
 		DisableFlagsInUseLine: true,
 	}
@@ -169,14 +196,16 @@ func main() {
 			enc := json.NewEncoder(f)
 			enc.SetIndent("", "  ")
 			config := Config{
-				Listen:        "IP:PORT",
-				Connect:       "IP:PORT",
-				Tunnel:        "IP:PORT",
-				ListenServers: "IP:PORT",
-				ClientPrint:   -1,
-				ServerPrint:   -1,
-				Buffer:        1 << 15,
-				Log:           "PATH",
+				Listen:             "IP:PORT",
+				Connect:            "IP:PORT",
+				Tunnel:             "IP:PORT",
+				ListenServers:      "IP:PORT",
+				ClientPrint:        -1,
+				ServerPrint:        -1,
+				Buffer:             1 << 15,
+				MaxAcceptedServers: 10,
+				PwdEnvName:         "PROXYPRINT_PWD",
+				Log:                "PATH",
 			}
 			if err := enc.Encode(config); err != nil {
 				log.Fatal("error writing config file: ", err)
@@ -194,7 +223,7 @@ func main() {
 		"",
 		"Network address of proxyprint session to tunnel to",
 	)
-	flag.StringVar(
+	flags.StringVar(
 		&config.ListenServers,
 		"listen-servers",
 		"",
@@ -217,6 +246,39 @@ func main() {
 		"buffer",
 		1<<15,
 		"Size of the buffer to use to copy data",
+	)
+	flags.UintVar(
+		&config.MaxWaitingTunnels,
+		"max-waiting-tunnels",
+		10,
+		"Set the number of tunnels (to servers) that can be waiting for servers at once."+
+			"Used with --tunnel flag.",
+	)
+	flags.UintVar(
+		&config.MaxAcceptedServers,
+		"max-accepted-servers",
+		10,
+		"Set the number of tunneling servers that can be accepted/handled at once"+
+			"Used with --listen-servers flag.",
+	)
+	flags.StringVar(
+		&config.PwdEnvName,
+		"pwd-env-name",
+		"PROXYPRINT_PWD",
+		"The environment variable for reading the tunneling password. "+
+			"If the name of the variable starts with the string 'file:', the value "+
+			"of the variable is treated as a file path and the pointed-to file is "+
+			"read and its content used as the password. "+
+			"An empty string means to not read any password "+
+			"(will still use empty password). "+
+			"An empty environment variable value means no (an empty) password.",
+	)
+	flags.BoolVar(
+		&config.RequirePwdEnvExists,
+		"require-pwd-env-exists",
+		false,
+		"Require environment variable value of pwd-env-name flag exists and, if "+
+			"not, throw a fatal error. If false, only warn.",
 	)
 	flags.StringVar(
 		&config.Log,
@@ -287,18 +349,23 @@ func run(cmd *cobra.Command, _ []string) {
 		if config.Listen == "" {
 			log.Fatal("must provide listen addr with listen-servers addr")
 		}
+		getPassword()
 		addr, err := net.ResolveTCPAddr("tcp", config.ListenServers)
 		if err != nil {
 			log.Fatal(err)
 		}
+		if config.MaxAcceptedServers == 0 {
+			config.MaxAcceptedServers = 10
+		}
 		shouldTunnel = true
-		tunnelChan = make(chan *net.TCPConn, 10)
+		tunnelChan = make(chan *BufferedConn, config.MaxAcceptedServers)
 		wg.Add(1)
 		startedServer = true
 		go runListenServers(addr)
 	}
 
 	if config.Tunnel != "" {
+		getPassword()
 		if connectAddr == nil && config.ListenServers == "" {
 			log.Fatal("must provide connect addr or listen-servers addr when tunneling")
 		}
@@ -306,6 +373,10 @@ func run(cmd *cobra.Command, _ []string) {
 		if err != nil {
 			log.Fatal(err)
 		}
+		if config.MaxWaitingTunnels == 0 {
+			config.MaxWaitingTunnels = 10
+		}
+		waitingChan = make(chan utils.Unit, config.MaxWaitingTunnels)
 		wg.Add(1)
 		startedServer = true
 		go runTunneler(addr)
@@ -324,7 +395,11 @@ func run(cmd *cobra.Command, _ []string) {
 
 var (
 	tunnelBytes      = []byte{0xff, 0xff, 0xff, 0xff}
+	versionBytes     = []byte{0, 0, 0, 1}
 	clientReadyBytes = []byte{0xfe, 0xfe, 0xfe, 0xfe}
+	serverReadyBytes = []byte{0xfd, 0xfd, 0xfd, 0xfd}
+	okBytes          = []byte{0x00, 0x00, 0x00, 0x01}
+	errorBytes       = []byte{0x00, 0x00, 0x00, 0x02}
 )
 
 func runListenClients(addr *net.TCPAddr) {
@@ -336,46 +411,62 @@ func runListenClients(addr *net.TCPAddr) {
 	defer ln.Close()
 
 	fmt.Printf("Listening for clients on %s...\n", addr)
-	for {
+	// NOTE: i for testing/logging purposes
+	for i := 1; true; {
 		c, err := ln.AcceptTCP()
 		if err != nil {
 			log.Fatal(err)
 		}
-		go handle(c)
+		go handle(NewBufferedConn(c), i)
 	}
 }
 
 func runTunneler(addr *net.TCPAddr) {
+	const retryTime = 2
+	const maxErrCount = 5
+
 	defer wg.Done()
 	fmt.Printf("Tunneling to %s...\n", addr)
 	errCount := 0
-	for {
-		if errCount == 5 {
-			time.Sleep(time.Second * 5)
+	// NOTE: i for testing/logging purposes
+	for i := -1; true; {
+		if errCount == maxErrCount {
+			// TODO: retry timer flag
+			time.Sleep(time.Second * retryTime)
 		}
+		waitingChan <- utils.Unit{}
 		conn, err := net.DialTCP("tcp", nil, addr)
 		if err == nil {
+			if errCount >= maxErrCount {
+				log.Print("tunneling reconnected")
+			}
 			errCount = 0
-			go handleTunnel(conn)
+			go handleTunnel(NewBufferedConn(conn), i)
 			continue
 		}
-		if errCount == 5 {
+		<-waitingChan
+		if errCount == maxErrCount {
 			continue
 		}
 		if !shouldIgnoreErr(err) {
 			log.Printf("error tunneling: %v", err)
 		}
 		errCount++
-		if errCount == 5 {
-			log.Println(
-				"5 tunnel connection errors encountered, " +
-					"muting these errors and retrying every 5 seconds...",
+		if errCount == maxErrCount {
+			log.Printf(
+				"%d tunnel connection errors encountered, "+
+					"muting these errors and retrying every %d seconds...",
+				maxErrCount, retryTime,
 			)
 		}
 	}
 }
 
-func handleTunnel(tunnel *net.TCPConn) {
+// NOTE: num for logging/testing purposes
+func handleTunnel(tunnel *BufferedConn, num int) {
+	// TODO: timeout?
+	var buf [4]byte
+	// Send tunnel header
 	if _, err := tunnel.Write(tunnelBytes); err != nil {
 		if !shouldIgnoreErr(err) {
 			log.Printf("error sending tunneling bytes: %v", err)
@@ -383,49 +474,148 @@ func handleTunnel(tunnel *net.TCPConn) {
 		tunnel.Close()
 		return
 	}
-	var buf [4]byte
-	if n, err := tunnel.Read(buf[:]); err != nil {
+
+	// Get and check version
+	if _, err := io.ReadFull(tunnel, buf[:]); err != nil {
 		if !shouldIgnoreErr(err) {
-			log.Printf("error reading ready bytes: %v", err)
+			log.Printf("error reading version: %v", err)
 		}
-	} else if n != 4 {
-		log.Printf("expected 4 ready bytes, got %d bytes", n)
-	} else if !bytes.Equal(buf[:], clientReadyBytes) {
-		log.Printf("expected %v as ready bytes, got %v", clientReadyBytes, buf)
-	} else {
-		handle(tunnel)
+		tunnel.Close()
+		return
+	} else if !bytes.Equal(buf[:], versionBytes) {
+		log.Fatalf("can only handle version up to %v, got %v", versionBytes, buf)
+		tunnel.Close()
 		return
 	}
+
+	// Send password
+	lenBytes := binary.BigEndian.AppendUint64(nil, uint64(len(password)))
+	if _, err := utils.WriteAll(tunnel, lenBytes); err != nil {
+		if !shouldIgnoreErr(err) {
+			log.Printf("error sending password length bytes: %v", err)
+		}
+		tunnel.Close()
+		return
+	} else if _, err := utils.WriteAll(tunnel, password); err != nil {
+		if !shouldIgnoreErr(err) {
+			log.Printf("error sending password bytes: %v", err)
+		}
+		tunnel.Close()
+		return
+	}
+
+	// Get response
+	if _, err := io.ReadFull(tunnel, buf[:]); err != nil {
+		// TODO: do a read full?
+		if !shouldIgnoreErr(err) {
+			log.Printf("error reading client password response bytes: %v", err)
+		}
+	} else if !bytes.Equal(buf[:], okBytes) {
+		log.Fatal("invalid password")
+	}
+
+	// Get ready bytes from server
+	if _, err := io.ReadFull(tunnel, buf[:]); err != nil {
+		// TODO: do a read full?
+		if !shouldIgnoreErr(err) {
+			log.Printf("error reading client ready bytes: %v", err)
+		}
+	} else if !bytes.Equal(buf[:], clientReadyBytes) {
+		log.Printf(
+			"expected %v as client ready bytes, got %v",
+			clientReadyBytes, buf,
+		)
+	}
+
+	// Send ready bytes to server
+	if _, err := utils.WriteAll(tunnel, serverReadyBytes); err != nil {
+		if !shouldIgnoreErr(err) {
+			log.Printf("error sending server ready bytes: %v", err)
+		}
+	} else {
+		<-waitingChan
+		handle(tunnel, num)
+		return
+	}
+	<-waitingChan
 	tunnel.Close()
 }
 
-func handle(client *net.TCPConn) {
+func handle(client *BufferedConn, num int) {
 	clientAddrStr := client.RemoteAddr().String()
 	logErr := func(errFmt string, args ...interface{}) {
 		log.Printf("["+clientAddrStr+"] "+errFmt, args...)
 	}
 
-	var server *net.TCPConn
+	var server *BufferedConn
 	if shouldTunnel {
-		server = <-tunnelChan
-		if _, err := server.Write(clientReadyBytes); err != nil {
-			logErr("error sending ready bytes: %v", err)
-			server.Close()
+		if num < 0 {
+		}
+		// TODO: make flag
+		timer := time.NewTimer(time.Second * 10)
+		for {
+			select {
+			case server = <-tunnelChan:
+			case <-timer.C:
+				break
+			}
+			if server == nil {
+				break
+			} else if checkTunnelReadiness(server, logErr) {
+				break
+			}
+		}
+		if !timer.Stop() {
+			<-timer.C
+		}
+		if server == nil {
 			client.Close()
 			return
 		}
 	} else {
 		var err error
-		server, err = net.DialTCP("tcp", nil, connectAddr)
+		srvr, err := net.DialTCP("tcp", nil, connectAddr)
 		if err != nil {
 			logErr("error connecting to server: %v", err)
 			client.Close()
 			return
 		}
+		server = NewBufferedConn(srvr)
 	}
 
 	go pipe(client, server, clientPrintFunc)
 	pipe(server, client, serverPrintFunc)
+}
+
+// Returns false if not ready (the passed conn will be closed)
+func checkTunnelReadiness(
+	server *BufferedConn, logErr func(string, ...any),
+) (ready bool) {
+	// Send ready bytes to tunnel
+	if _, err := utils.WriteAll(server, clientReadyBytes); err != nil {
+		logErr("error sending client ready bytes: %v", err)
+		server.Close()
+		server = nil
+		return
+	}
+
+	// Get ready bytes from tunnel
+	var buf [4]byte
+	if _, err := io.ReadFull(server, buf[:]); err != nil {
+		// TODO: do a read full?
+		if !shouldIgnoreErr(err) {
+			log.Printf("error reading server ready bytes: %v", err)
+		}
+		return
+	} else if !bytes.Equal(buf[:], serverReadyBytes) {
+		log.Printf(
+			"expected %v as server ready bytes, got %v",
+			serverReadyBytes, buf,
+		)
+	} else {
+		ready = true
+	}
+	return
 }
 
 func runListenServers(addr *net.TCPAddr) {
@@ -443,31 +633,73 @@ func runListenServers(addr *net.TCPAddr) {
 			log.Fatal(err)
 		}
 		//go handleServer(c)
-		handleServer(c)
+		handleServer(NewBufferedConn(c))
 	}
 }
 
-func handleServer(server *net.TCPConn) {
-	var buf [4]byte
-	server.SetReadDeadline(time.Now().Add(time.Second))
-	if n, err := server.Read(buf[:]); err != nil {
+func handleServer(server *BufferedConn) {
+	shouldClose := utils.NewT(true)
+	defer utils.DeferClose(shouldClose, server)
+
+	var fullBuf [8]byte
+	buf := fullBuf[:4]
+	// TODO: timeout flag
+	server.SetDeadline(time.Now().Add(time.Second * 2))
+
+	// Get tunnel header
+	if _, err := io.ReadFull(server, buf[:]); err != nil {
 		if !shouldIgnoreErr(err) {
 			log.Printf("error reading tunnel bytes: %v", err)
 		}
-	} else if n != 4 {
-		log.Printf("expected 4 tunnel bytes, got %d bytes", n)
+		return
 	} else if !bytes.Equal(buf[:], tunnelBytes) {
 		log.Printf("expected %v as tunnel bytes, got %v", tunnelBytes, buf)
-	} else {
-		server.SetReadDeadline(time.Time{})
-		tunnelChan <- server
 		return
 	}
-	server.Close()
+
+	// Send version
+	if _, err := utils.WriteAll(server, versionBytes); err != nil {
+		if !shouldIgnoreErr(err) {
+			log.Printf("error sending version bytes: %v", err)
+		}
+		return
+	}
+
+	// Get and check password
+	if _, err := io.ReadFull(server, fullBuf[:]); err != nil {
+		if !shouldIgnoreErr(err) {
+			log.Printf("error reading password length bytes: %v", err)
+		}
+		return
+	}
+	pwdLen := binary.BigEndian.Uint64(fullBuf[:])
+	if pwdLen != uint64(len(password)) {
+		server.Write(errorBytes)
+		return
+	}
+	if ok, err := readCheckPassword(server); !ok {
+		if !shouldIgnoreErr(err) {
+			log.Printf("error reading password bytes: %v", err)
+		}
+		server.Write(errorBytes)
+		return
+	}
+
+	// Send response
+	if _, err := utils.WriteAll(server, okBytes); err != nil {
+		if !shouldIgnoreErr(err) {
+			log.Printf("error sending response bytes: %v", err)
+		}
+		return
+	}
+
+	*shouldClose = false
+	server.SetDeadline(time.Time{})
+	tunnelChan <- server
 }
 
 // Only prints and closes "from"
-func pipe(from, to *net.TCPConn, pf PrintFunc) {
+func pipe(from, to *BufferedConn, pf PrintFunc) {
 	defer from.Close()
 	fromAddrStr := from.RemoteAddr().String()
 	toAddrStr := to.RemoteAddr().String()
@@ -482,6 +714,52 @@ func pipe(from, to *net.TCPConn, pf PrintFunc) {
 			return
 		}
 	}
+}
+
+const (
+	// Maximum number of password bufs to keep in the pool. Any more are
+	// discarded.
+	maxPwdBufs = 1000
+)
+
+var (
+	pwdCheckBufPool = utils.AlwaysNewPool(func() []byte {
+		n := 1024
+		if l := len(password); l < n {
+			n = l
+		}
+		return make([]byte, n)
+	})
+	pwdBufsOut atomic.Int64
+)
+
+func readCheckPassword(r io.Reader) (bool, error) {
+	if len(password) == 0 {
+		return true, nil
+	}
+	buf, pwd := pwdCheckBufPool.Get(), password[:]
+	bufNum := pwdBufsOut.Add(1)
+	defer func() {
+		if bufNum <= maxPwdBufs {
+			pwdCheckBufPool.Put(buf)
+		}
+		pwdBufsOut.Add(-1)
+	}()
+	for len(pwd) != 0 {
+		l := len(pwd)
+		if l > len(buf) {
+			l = len(buf)
+		}
+		buf := buf[:l]
+		n, err := r.Read(buf)
+		if err != nil {
+			return false, err
+		} else if !bytes.Equal(buf[:n], pwd[:n]) {
+			return false, nil
+		}
+		pwd = pwd[n:]
+	}
+	return true, nil
 }
 
 func listenPrint() {
@@ -544,4 +822,79 @@ func shouldIgnoreErr(err error) bool {
 		}
 	}
 	return ret
+}
+
+func getPassword() {
+	envName, readFile := config.PwdEnvName, false
+	if envName == "" {
+		return
+	}
+	if strings.HasPrefix(envName, "file:") {
+		readFile = true
+		envName = envName[5:]
+	}
+	val, ok := os.LookupEnv(envName)
+	if !ok {
+		logFunc := log.Printf
+		if config.RequirePwdEnvExists {
+			logFunc = log.Fatalf
+		}
+		logFunc("password environment variable %s doesn't exist", envName)
+		readFile = false
+	}
+	if !readFile {
+		password = []byte(val)
+		return
+	}
+	content, err := os.ReadFile(val)
+	if err != nil {
+		log.Fatalf(
+			"error reading password from %s (gotten from ENVVAR %s): %v",
+			val, envName, err,
+		)
+	}
+	password = content
+}
+
+type BufferedConn struct {
+	net.Conn
+	buf bytes.Buffer
+	mtx sync.RWMutex
+	/*
+	  peeker bufio.Reader
+	  mtx sync.Mutex
+	*/
+	peeker bufio.Reader
+}
+
+func NewBufferedConn(c net.Conn) *BufferedConn {
+	return &BufferedConn{
+		Conn: c,
+	}
+}
+
+func (bc *BufferedConn) Peek(p []byte) (int, error) {
+	l := len(p)
+	bc.mtx.Lock()
+	defer bc.mtx.Unlock()
+	n := copy(p, bc.buf.Bytes())
+	if n == l {
+		return l, nil
+	}
+	nn, err := bc.Conn.Read(p[n:])
+	n += nn
+	bc.buf.Write(p[n:])
+	return n, err
+}
+
+func (bc *BufferedConn) Read(p []byte) (n int, err error) {
+	l := len(p)
+	bc.mtx.Lock()
+	defer bc.mtx.Unlock()
+	n = copy(p, bc.buf.Next(l))
+	if n != l {
+		l, err = bc.Conn.Read(p[n:])
+		n += l
+	}
+	return
 }
