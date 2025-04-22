@@ -24,6 +24,7 @@ import (
 
 	utils "github.com/johnietre/utils/go"
 	"github.com/spf13/cobra"
+	"github.com/spf13/pflag"
 )
 
 type printStatus int
@@ -90,6 +91,7 @@ const (
 	stopValPrint // Used for checking if values are in range
 )
 
+// TODO: do better (try viper?)
 type Config struct {
 	Listen              string      `json:"listen,omitempty"`
 	Connect             string      `json:"connect,omitempty"`
@@ -103,6 +105,20 @@ type Config struct {
 	PwdEnvName          string      `json:"pwdEnvName,omitempty"`
 	RequirePwdEnvExists bool        `json:"requirePwdEnvExists,omitempty"`
 	Log                 string      `json:"log,omitempty"`
+}
+type ConfigPtrs struct {
+	Listen              *string      `json:"listen,omitempty"`
+	Connect             *string      `json:"connect,omitempty"`
+	Tunnel              *string      `json:"tunnel,omitempty"`
+	ListenServers       *string      `json:"listenServers,omitempty"`
+	ClientPrint         *printStatus `json:"clientPrint,omitempty"`
+	ServerPrint         *printStatus `json:"serverPrint,omitempty"`
+	Buffer              *uint64      `json:"buffer,omitempty"`
+	MaxWaitingTunnels   *uint        `json:"maxOpenTunnels,omitempty"`
+	MaxAcceptedServers  *uint        `json:"maxAcceptedServers,omitempty"`
+	PwdEnvName          *string      `json:"pwdEnvName,omitempty"`
+	RequirePwdEnvExists *bool        `json:"requirePwdEnvExists,omitempty"`
+	Log                 *string      `json:"log,omitempty"`
 }
 
 func (c *Config) FillEmptyFrom(other *Config) {
@@ -143,6 +159,55 @@ func (c *Config) FillEmptyFrom(other *Config) {
 	}
 	if c.Log == "" {
 		c.Log = other.Log
+	}
+}
+
+func checkFlagSet(flags *pflag.FlagSet, name string) bool {
+	flag := flags.Lookup(name)
+	if flag == nil {
+		log.Fatal("invalid flag lookup: ", name)
+	}
+	return flag.Changed
+}
+
+func (c *Config) PopulateCheckFlags(other *ConfigPtrs, flags *pflag.FlagSet) {
+	if other.Listen != nil && !checkFlagSet(flags, "listen") {
+		c.Listen = *other.Listen
+	}
+	if other.Connect != nil && !checkFlagSet(flags, "connect") {
+		c.Connect = *other.Connect
+	}
+	if other.Tunnel != nil && !checkFlagSet(flags, "tunnel") {
+		c.Tunnel = *other.Tunnel
+	}
+	if other.ListenServers != nil && !checkFlagSet(flags, "listen-servers") {
+		c.ListenServers = *other.ListenServers
+	}
+	// NOTE: do something else?
+	if other.ClientPrint != nil && !checkFlagSet(flags, "client-print") {
+		c.ClientPrint = *other.ClientPrint
+	}
+	if other.ServerPrint != nil && !checkFlagSet(flags, "server-print") {
+		c.ServerPrint = *other.ServerPrint
+	}
+	if other.Buffer != nil && !checkFlagSet(flags, "buffer") {
+		c.Buffer = *other.Buffer
+	}
+	if other.MaxWaitingTunnels != nil && !checkFlagSet(flags, "max-waiting-tunnels") {
+		c.MaxWaitingTunnels = *other.MaxWaitingTunnels
+	}
+	if other.MaxAcceptedServers != nil && !checkFlagSet(flags, "max-accepted-servers") {
+		c.MaxAcceptedServers = *other.MaxAcceptedServers
+	}
+	// NOTE: do something else?
+	if other.PwdEnvName != nil && !checkFlagSet(flags, "pwd-env-name") {
+		c.PwdEnvName = *other.PwdEnvName
+	}
+	if other.RequirePwdEnvExists != nil && !checkFlagSet(flags, "require-pwd-env-exists") {
+		c.RequirePwdEnvExists = *other.RequirePwdEnvExists
+	}
+	if other.Log != nil && !checkFlagSet(flags, "log") {
+		c.Log = *other.Log
 	}
 }
 
@@ -299,12 +364,13 @@ func run(cmd *cobra.Command, _ []string) {
 		if err != nil {
 			log.Fatal("error opening config file: ", err)
 		}
-		var newCfg Config
+		var newCfg ConfigPtrs
 		if err := json.NewDecoder(f).Decode(&newCfg); err != nil {
 			log.Fatal("error parsing config file: ", err)
 		}
 		f.Close()
-		config.FillEmptyFrom(&newCfg)
+		//config.FillEmptyFrom(&newCfg)
+		config.PopulateCheckFlags(&newCfg, flags)
 	}
 
 	if config.Log != "" {
@@ -318,8 +384,9 @@ func run(cmd *cobra.Command, _ []string) {
 	if config.Connect != "" {
 		addr, err := net.ResolveTCPAddr("tcp", config.Connect)
 		if err != nil {
-			log.Fatal(err)
+			log.Fatal("error resolving connect TCP address: ", err)
 		}
+		fmt.Printf("Connecting to servers at %s...\n", addr)
 		connectAddr = addr
 	}
 
@@ -338,7 +405,7 @@ func run(cmd *cobra.Command, _ []string) {
 		}
 		addr, err := net.ResolveTCPAddr("tcp", config.Listen)
 		if err != nil {
-			log.Fatal(err)
+			log.Fatal("error resolving listen TCP address: ", err)
 		}
 		wg.Add(1)
 		startedServer = true
@@ -352,7 +419,7 @@ func run(cmd *cobra.Command, _ []string) {
 		getPassword()
 		addr, err := net.ResolveTCPAddr("tcp", config.ListenServers)
 		if err != nil {
-			log.Fatal(err)
+			log.Fatal("error resolving listening (servers) TCP address: ", err)
 		}
 		if config.MaxAcceptedServers == 0 {
 			config.MaxAcceptedServers = 10
@@ -371,7 +438,7 @@ func run(cmd *cobra.Command, _ []string) {
 		}
 		addr, err := net.ResolveTCPAddr("tcp", config.Tunnel)
 		if err != nil {
-			log.Fatal(err)
+			log.Fatal("error resolving tunnel TCP address: ", err)
 		}
 		if config.MaxWaitingTunnels == 0 {
 			config.MaxWaitingTunnels = 10
@@ -406,7 +473,7 @@ func runListenClients(addr *net.TCPAddr) {
 	defer wg.Done()
 	ln, err := net.ListenTCP("tcp", addr)
 	if err != nil {
-		log.Fatal(err)
+		log.Fatal("error listening: ", err)
 	}
 	defer ln.Close()
 
@@ -415,7 +482,7 @@ func runListenClients(addr *net.TCPAddr) {
 	for i := 1; true; {
 		c, err := ln.AcceptTCP()
 		if err != nil {
-			log.Fatal(err)
+			log.Fatal("error accepting: ", err)
 		}
 		go handle(NewBufferedConn(c), i)
 	}
@@ -622,7 +689,7 @@ func runListenServers(addr *net.TCPAddr) {
 	defer wg.Done()
 	ln, err := net.ListenTCP("tcp", addr)
 	if err != nil {
-		log.Fatal(err)
+		log.Fatal("error listening (tunnels): ", err)
 	}
 	defer ln.Close()
 
@@ -630,7 +697,7 @@ func runListenServers(addr *net.TCPAddr) {
 	for {
 		c, err := ln.AcceptTCP()
 		if err != nil {
-			log.Fatal(err)
+			log.Fatal("error accepting (tunnels): ", err)
 		}
 		//go handleServer(c)
 		handleServer(NewBufferedConn(c))
