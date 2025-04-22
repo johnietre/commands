@@ -8,6 +8,7 @@ import (
 	"log"
 	"net"
 	"net/http"
+	"os"
 	"strings"
 	"sync"
 
@@ -107,7 +108,9 @@ func wsServer(hub bool) {
 		return
 	}
 	if testOk {
-		return
+		ln.Close()
+		server.Close()
+		os.Exit(0)
 	}
 
 	printErr(server.Serve(ln), true)
@@ -130,7 +133,8 @@ func wsClient(origin string) {
 	}
 	defer ws.Close(webs.StatusNormalClosure, "")
 	if testOk {
-		return
+		ws.Close(webs.StatusNormalClosure, "")
+		os.Exit(0)
 	}
 
 	// Get user input

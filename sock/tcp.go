@@ -3,6 +3,7 @@ package main
 import (
 	"encoding/json"
 	"net"
+	"os"
 	"strings"
 	"sync"
 )
@@ -15,7 +16,8 @@ func tcpServer(hub bool) {
 	}
 	defer ln.Close()
 	if testOk {
-		return
+		ln.Close()
+		os.Exit(0)
 	}
 
 	type hubMsg struct{ From, Msg string }
@@ -92,7 +94,8 @@ func tcpClient() {
 	}
 	defer conn.Close()
 	if testOk {
-		return
+		conn.Close()
+		os.Exit(0)
 	}
 
 	// Get user input

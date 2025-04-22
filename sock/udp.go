@@ -4,6 +4,7 @@ import (
 	//"encoding/json"
 	"fmt"
 	"net"
+	"os"
 	//"strings"
 	//"sync"
 )
@@ -21,7 +22,8 @@ func udpServer(hub bool) {
 	}
 	defer conn.Close()
 	if testOk {
-		return
+		conn.Close()
+		os.Exit(0)
 	}
 	printErr(fmt.Errorf("Not implemented yet"), true)
 	return
@@ -106,7 +108,8 @@ func udpClient() {
 	}
 	defer conn.Close()
 	if testOk {
-		return
+		conn.Close()
+		os.Exit(0)
 	}
 
 	// Get user input

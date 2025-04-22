@@ -6,6 +6,7 @@ package main
  * Allow option to just test if address is accessible
  * Allow option to test if multiple ports are accessible
  * Flag for specifying laddr
+ * Flag for timeout
  */
 
 import (
@@ -30,6 +31,8 @@ var (
 )
 
 func main() {
+	log.SetFlags(0)
+
 	var origin string
 	var hub, ws, udp, server bool
 
@@ -40,7 +43,7 @@ func main() {
 		Args:                  cobra.MaximumNArgs(1),
 		DisableFlagsInUseLine: true,
 		Run: func(_ *cobra.Command, args []string) {
-			addr := "127.0.0.1:8000"
+			addr = "127.0.0.1:8000"
 			if len(args) != 0 {
 				addr = args[0]
 			}
