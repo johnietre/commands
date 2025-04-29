@@ -385,6 +385,7 @@ func handle(client *BufferedConn, num int) {
 				break
 			} else if checkTunnelReadiness(server, logErr) {
 				server.Close()
+				server = nil
 				monitor.RemoveTunneled()
 				monitor.AddTunneledFailedReady()
 				break
