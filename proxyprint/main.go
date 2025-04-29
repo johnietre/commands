@@ -253,6 +253,7 @@ func runTunneler(addr *net.TCPAddr) {
 				log.Print("tunneling reconnected")
 			}
 			errCount = 0
+			monitor.TunnelsAtMaxErr.Store(false)
 			monitor.AddTotalTunnelsConnected()
 			go connectTunnel(NewBufferedConn(conn), i)
 			continue
@@ -266,6 +267,7 @@ func runTunneler(addr *net.TCPAddr) {
 		}
 		errCount++
 		if errCount == maxErrCount {
+			monitor.TunnelsAtMaxErr.Store(true)
 			log.Printf(
 				"%d tunnel connection errors encountered, "+
 					"muting these errors and retrying every %d seconds...",
@@ -277,6 +279,12 @@ func runTunneler(addr *net.TCPAddr) {
 
 // NOTE: num for logging/testing purposes
 func connectTunnel(tunnel *BufferedConn, num int) {
+	shouldRun := utils.NewT(true)
+	defer utils.DeferFunc(shouldRun, func() {
+		tunnel.Close()
+		<-waitingChan
+	})
+
 	// TODO: timeout?
 	var buf [4]byte
 	// Send tunnel header
@@ -284,7 +292,6 @@ func connectTunnel(tunnel *BufferedConn, num int) {
 		if !shouldIgnoreErr(err) {
 			log.Printf("error sending tunneling bytes: %v", err)
 		}
-		tunnel.Close()
 		return
 	}
 
@@ -293,11 +300,9 @@ func connectTunnel(tunnel *BufferedConn, num int) {
 		if !shouldIgnoreErr(err) {
 			log.Printf("error reading version: %v", err)
 		}
-		tunnel.Close()
 		return
 	} else if !bytes.Equal(buf[:], versionBytes) {
 		log.Fatalf("can only handle version up to %v, got %v", versionBytes, buf)
-		tunnel.Close()
 		return
 	}
 
@@ -307,13 +312,11 @@ func connectTunnel(tunnel *BufferedConn, num int) {
 		if !shouldIgnoreErr(err) {
 			log.Printf("error sending password length bytes: %v", err)
 		}
-		tunnel.Close()
 		return
 	} else if _, err := utils.WriteAll(tunnel, password); err != nil {
 		if !shouldIgnoreErr(err) {
 			log.Printf("error sending password bytes: %v", err)
 		}
-		tunnel.Close()
 		return
 	}
 
@@ -323,6 +326,7 @@ func connectTunnel(tunnel *BufferedConn, num int) {
 		if !shouldIgnoreErr(err) {
 			log.Printf("error reading client password response bytes: %v", err)
 		}
+		return
 	} else if !bytes.Equal(buf[:], okBytes) {
 		log.Fatal("invalid password")
 	}
@@ -333,11 +337,13 @@ func connectTunnel(tunnel *BufferedConn, num int) {
 		if !shouldIgnoreErr(err) {
 			log.Printf("error reading client ready bytes: %v", err)
 		}
+		return
 	} else if !bytes.Equal(buf[:], clientReadyBytes) {
 		log.Printf(
 			"expected %v as client ready bytes, got %v",
 			clientReadyBytes, buf,
 		)
+		return
 	}
 
 	// Send ready bytes to server
@@ -345,17 +351,13 @@ func connectTunnel(tunnel *BufferedConn, num int) {
 		if !shouldIgnoreErr(err) {
 			log.Printf("error sending server ready bytes: %v", err)
 		}
-	} else {
-		<-waitingChan
-		func() {
-			monitor.AddTunnel()
-			defer monitor.RemoveTunnel()
-			handle(tunnel, num)
-		}()
 		return
 	}
+	*shouldRun = false
 	<-waitingChan
-	tunnel.Close()
+	monitor.AddTunnel()
+	defer monitor.RemoveTunnel()
+	handle(tunnel, num)
 }
 
 func handle(client *BufferedConn, num int) {

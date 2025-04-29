@@ -20,6 +20,7 @@ type Monitor struct {
 	// The total number of tunnels connected to remote (not having gone through
 	// the process of tunneling).
 	TotalTunnelsConnected AtomicUint64 `json:"totalTunnelAttempts"`
+	TunnelsAtMaxErr       AtomicBool   `json:"tunnelsAtMaxErr"`
 	// The current number of tunnels to remote (to the "tunnel" addr).
 	CurrentTunnels AtomicInt64 `json:"currentTunnels"`
 	// The total number of tunnels to remote (ever).
