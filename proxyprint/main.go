@@ -1,6 +1,5 @@
-// TODO: allow printing to files
 // TODO: reuseaddr option
-// TODO: clean shutdown with signal handling and connection tracking
+// TODO: monitor server optional password (and allow HTTPS)
 package main
 
 import (
@@ -13,213 +12,33 @@ import (
 	"io"
 	"log"
 	"net"
+	"net/http"
 	"os"
-	"path/filepath"
-	"strconv"
+	"os/signal"
 	"strings"
 	"sync"
 	"sync/atomic"
 	"syscall"
 	"time"
 
+	"github.com/johnietre/go-jmux"
 	utils "github.com/johnietre/utils/go"
 	"github.com/spf13/cobra"
-	"github.com/spf13/pflag"
 )
-
-type printStatus int
-
-func (p printStatus) String() string {
-	return fmt.Sprint(int(p))
-}
-
-func (p *printStatus) Set(s string) error {
-	n, err := strconv.Atoi(s)
-	*p = printStatus(n)
-	if *p < noPrint || *p >= stopValPrint {
-		return fmt.Errorf("invalid value: %d", *p)
-	}
-	return err
-}
-
-func (p printStatus) Type() string {
-	return "PrintStatus"
-}
-
-func (p printStatus) MarshalJSON() ([]byte, error) {
-	return json.Marshal(int(p))
-}
-
-func (p *printStatus) UnmarshalJSON(b []byte) error {
-	i := 0
-	if err := json.Unmarshal(b, &i); err != nil {
-		return err
-	}
-	pi := printStatus(i)
-	if pi < noPrint || pi >= stopValPrint {
-		return fmt.Errorf("invalid value: %d", pi)
-	}
-	*p = pi
-	return nil
-}
-
-func (p printStatus) printFunc() PrintFunc {
-	switch p {
-	case noPrint:
-		return noPrintFunc
-	case doPrint:
-		return doPrintFunc
-	case bytesPrint:
-		return bytesPrintFunc
-	case lowerHexBytesPrint:
-		return lowerHexBytesPrintFunc
-	case upperHexBytesPrint:
-		return upperHexBytesPrintFunc
-	}
-	log.Fatalln("unknown printStatus value:", p)
-	return nil
-}
-
-type PrintFunc = func(b []byte, from, to string)
-
-const (
-	noPrint printStatus = iota
-	doPrint
-	bytesPrint
-	lowerHexBytesPrint
-	upperHexBytesPrint
-	stopValPrint // Used for checking if values are in range
-)
-
-// TODO: do better (try viper?)
-type Config struct {
-	Listen              string      `json:"listen,omitempty"`
-	Connect             string      `json:"connect,omitempty"`
-	Tunnel              string      `json:"tunnel,omitempty"`
-	ListenServers       string      `json:"listenServers,omitempty"`
-	ClientPrint         printStatus `json:"clientPrint,omitempty"`
-	ServerPrint         printStatus `json:"serverPrint,omitempty"`
-	Buffer              uint64      `json:"buffer,omitempty"`
-	MaxWaitingTunnels   uint        `json:"maxOpenTunnels,omitempty"`
-	MaxAcceptedServers  uint        `json:"maxAcceptedServers,omitempty"`
-	PwdEnvName          string      `json:"pwdEnvName,omitempty"`
-	RequirePwdEnvExists bool        `json:"requirePwdEnvExists,omitempty"`
-	Log                 string      `json:"log,omitempty"`
-}
-type ConfigPtrs struct {
-	Listen              *string      `json:"listen,omitempty"`
-	Connect             *string      `json:"connect,omitempty"`
-	Tunnel              *string      `json:"tunnel,omitempty"`
-	ListenServers       *string      `json:"listenServers,omitempty"`
-	ClientPrint         *printStatus `json:"clientPrint,omitempty"`
-	ServerPrint         *printStatus `json:"serverPrint,omitempty"`
-	Buffer              *uint64      `json:"buffer,omitempty"`
-	MaxWaitingTunnels   *uint        `json:"maxOpenTunnels,omitempty"`
-	MaxAcceptedServers  *uint        `json:"maxAcceptedServers,omitempty"`
-	PwdEnvName          *string      `json:"pwdEnvName,omitempty"`
-	RequirePwdEnvExists *bool        `json:"requirePwdEnvExists,omitempty"`
-	Log                 *string      `json:"log,omitempty"`
-}
-
-func (c *Config) FillEmptyFrom(other *Config) {
-	if c.Listen == "" {
-		c.Listen = other.Listen
-	}
-	if c.Connect == "" {
-		c.Connect = other.Connect
-	}
-	if c.Tunnel == "" {
-		c.Tunnel = other.Tunnel
-	}
-	if c.ListenServers == "" {
-		c.ListenServers = other.ListenServers
-	}
-	// NOTE: do something else?
-	if c.ClientPrint == noPrint {
-		c.ClientPrint = other.ClientPrint
-	}
-	if c.ServerPrint == noPrint {
-		c.ServerPrint = other.ServerPrint
-	}
-	if c.Buffer == 0 {
-		c.Buffer = other.Buffer
-	}
-	if c.MaxWaitingTunnels == 0 {
-		c.MaxWaitingTunnels = other.MaxWaitingTunnels
-	}
-	if c.MaxAcceptedServers == 0 {
-		c.MaxAcceptedServers = other.MaxAcceptedServers
-	}
-	// NOTE: do something else?
-	if c.PwdEnvName == "" {
-		c.PwdEnvName = other.PwdEnvName
-	}
-	if c.RequirePwdEnvExists == false {
-		c.RequirePwdEnvExists = other.RequirePwdEnvExists
-	}
-	if c.Log == "" {
-		c.Log = other.Log
-	}
-}
-
-func checkFlagSet(flags *pflag.FlagSet, name string) bool {
-	flag := flags.Lookup(name)
-	if flag == nil {
-		log.Fatal("invalid flag lookup: ", name)
-	}
-	return flag.Changed
-}
-
-func (c *Config) PopulateCheckFlags(other *ConfigPtrs, flags *pflag.FlagSet) {
-	if other.Listen != nil && !checkFlagSet(flags, "listen") {
-		c.Listen = *other.Listen
-	}
-	if other.Connect != nil && !checkFlagSet(flags, "connect") {
-		c.Connect = *other.Connect
-	}
-	if other.Tunnel != nil && !checkFlagSet(flags, "tunnel") {
-		c.Tunnel = *other.Tunnel
-	}
-	if other.ListenServers != nil && !checkFlagSet(flags, "listen-servers") {
-		c.ListenServers = *other.ListenServers
-	}
-	// NOTE: do something else?
-	if other.ClientPrint != nil && !checkFlagSet(flags, "client-print") {
-		c.ClientPrint = *other.ClientPrint
-	}
-	if other.ServerPrint != nil && !checkFlagSet(flags, "server-print") {
-		c.ServerPrint = *other.ServerPrint
-	}
-	if other.Buffer != nil && !checkFlagSet(flags, "buffer") {
-		c.Buffer = *other.Buffer
-	}
-	if other.MaxWaitingTunnels != nil && !checkFlagSet(flags, "max-waiting-tunnels") {
-		c.MaxWaitingTunnels = *other.MaxWaitingTunnels
-	}
-	if other.MaxAcceptedServers != nil && !checkFlagSet(flags, "max-accepted-servers") {
-		c.MaxAcceptedServers = *other.MaxAcceptedServers
-	}
-	// NOTE: do something else?
-	if other.PwdEnvName != nil && !checkFlagSet(flags, "pwd-env-name") {
-		c.PwdEnvName = *other.PwdEnvName
-	}
-	if other.RequirePwdEnvExists != nil && !checkFlagSet(flags, "require-pwd-env-exists") {
-		c.RequirePwdEnvExists = *other.RequirePwdEnvExists
-	}
-	if other.Log != nil && !checkFlagSet(flags, "log") {
-		c.Log = *other.Log
-	}
-}
 
 var (
 	clientPrintFunc, serverPrintFunc PrintFunc = noPrintFunc, noPrintFunc
+	clientPrintFile                            = os.Stdout
+	serverPrintFile                            = os.Stdout
 
-	connectAddr *net.TCPAddr
+	connectAddr                    *net.TCPAddr
+	clientListener, serverListener atomic.Pointer[net.TCPListener]
 
-	printChan   chan string
+	printChan   chan PrintData
 	tunnelChan  chan *BufferedConn
 	waitingChan chan utils.Unit
-	wg          sync.WaitGroup
+
+	monitor Monitor
 
 	shouldTunnel bool
 
@@ -230,127 +49,7 @@ var (
 func main() {
 	log.SetFlags(log.LstdFlags)
 
-	cmd := &cobra.Command{
-		Use:                   "proxyprint",
-		Short:                 "Run a proxy which can print out communications in a variety of ways",
-		Long:                  "Run a proxy which can print out communications in a variety of ways. A password can be specified using the PROXYPRINT_PWD environment variable (unless it is set otherwise).",
-		Run:                   run,
-		DisableFlagsInUseLine: true,
-	}
-	cmd.AddCommand(&cobra.Command{
-		Use:   "generate",
-		Short: "Generate a blank config file",
-		Long:  "Generate a blank config file to populate. NOTE: the file is generated with mostly invalid values which must be changed or deleted.",
-		Run: func(_ *cobra.Command, args []string) {
-			path := "proxyprint.conf.json"
-			if len(args) > 0 {
-				info, err := os.Stat(args[0])
-				if err != nil && !os.IsNotExist(err) {
-					log.Fatal("error checking output path: ", err)
-				} else if err == nil && info.IsDir() {
-					path = filepath.Join(args[0], path)
-				} else {
-					path = args[0]
-				}
-			}
-			f, err := os.Create(path)
-			if err != nil {
-				log.Fatal("error creating config file: ", err)
-			}
-			defer f.Close()
-			enc := json.NewEncoder(f)
-			enc.SetIndent("", "  ")
-			config := Config{
-				Listen:             "IP:PORT",
-				Connect:            "IP:PORT",
-				Tunnel:             "IP:PORT",
-				ListenServers:      "IP:PORT",
-				ClientPrint:        -1,
-				ServerPrint:        -1,
-				Buffer:             1 << 15,
-				MaxAcceptedServers: 10,
-				PwdEnvName:         "PROXYPRINT_PWD",
-				Log:                "PATH",
-			}
-			if err := enc.Encode(config); err != nil {
-				log.Fatal("error writing config file: ", err)
-			}
-		},
-	})
-
-	flags := cmd.Flags()
-
-	flags.StringVar(&config.Listen, "listen", "", "Network address to listen on")
-	flags.StringVar(&config.Connect, "connect", "", "Network address to connect to")
-	flags.StringVar(
-		&config.Tunnel,
-		"tunnel",
-		"",
-		"Network address of proxyprint session to tunnel to",
-	)
-	flags.StringVar(
-		&config.ListenServers,
-		"listen-servers",
-		"",
-		"Network address to listen for tunneling servers on",
-	)
-	flags.Var(
-		&config.ClientPrint,
-		"client-print",
-		"Set the client data print (0 = off*, 1 = as string, "+
-			"2 = as bytes, 3 = as lower hex bytestring, 4 = as upper hex bytestring)",
-	)
-	flags.Var(
-		&config.ServerPrint,
-		"server-print",
-		"Set the server data print (0 = off*, 1 = as string, "+
-			"2 = as bytes, 3 = as lower hex bytestring, 4 = as upper hex bytestring)",
-	)
-	flags.Uint64Var(
-		&config.Buffer,
-		"buffer",
-		1<<15,
-		"Size of the buffer to use to copy data",
-	)
-	flags.UintVar(
-		&config.MaxWaitingTunnels,
-		"max-waiting-tunnels",
-		10,
-		"Set the number of tunnels (to servers) that can be waiting for servers at once."+
-			"Used with --tunnel flag.",
-	)
-	flags.UintVar(
-		&config.MaxAcceptedServers,
-		"max-accepted-servers",
-		10,
-		"Set the number of tunneling servers that can be accepted/handled at once"+
-			"Used with --listen-servers flag.",
-	)
-	flags.StringVar(
-		&config.PwdEnvName,
-		"pwd-env-name",
-		"PROXYPRINT_PWD",
-		"The environment variable for reading the tunneling password. "+
-			"If the name of the variable starts with the string 'file:', the value "+
-			"of the variable is treated as a file path and the pointed-to file is "+
-			"read and its content used as the password. "+
-			"An empty string means to not read any password "+
-			"(will still use empty password). "+
-			"An empty environment variable value means no (an empty) password.",
-	)
-	flags.BoolVar(
-		&config.RequirePwdEnvExists,
-		"require-pwd-env-exists",
-		false,
-		"Require environment variable value of pwd-env-name flag exists and, if "+
-			"not, throw a fatal error. If false, only warn.",
-	)
-	flags.StringVar(
-		&config.Log,
-		"log", "", "File to output logs to (blank is command line)",
-	)
-	flags.String("cfg", "", "Path to config file")
-
+	cmd := makeCmd()
 	if err := cmd.Execute(); err != nil {
 		log.Fatal(err)
 	}
@@ -397,6 +96,20 @@ func run(cmd *cobra.Command, _ []string) {
 	clientPrintFunc = config.ClientPrint.printFunc()
 	serverPrintFunc = config.ServerPrint.printFunc()
 
+	var err error
+	if config.ClientPrintFile != "" && config.ClientPrint != noPrint {
+		clientPrintFile, err = utils.OpenAppend(config.ClientPrintFile)
+		if err != nil {
+			log.Fatal("error opening client print file: ", err)
+		}
+	}
+	if config.ServerPrintFile != "" && config.ServerPrint != noPrint {
+		serverPrintFile, err = utils.OpenAppend(config.ServerPrintFile)
+		if err != nil {
+			log.Fatal("error opening server print file: ", err)
+		}
+	}
+
 	startedServer := false
 
 	if config.Listen != "" {
@@ -407,9 +120,12 @@ func run(cmd *cobra.Command, _ []string) {
 		if err != nil {
 			log.Fatal("error resolving listen TCP address: ", err)
 		}
-		wg.Add(1)
 		startedServer = true
-		go runListenClients(addr)
+		monitor.wg.Add(1)
+		go func() {
+			runListenClients(addr)
+			monitor.wg.Done()
+		}()
 	}
 
 	if config.ListenServers != "" {
@@ -426,9 +142,12 @@ func run(cmd *cobra.Command, _ []string) {
 		}
 		shouldTunnel = true
 		tunnelChan = make(chan *BufferedConn, config.MaxAcceptedServers)
-		wg.Add(1)
 		startedServer = true
-		go runListenServers(addr)
+		monitor.wg.Add(1)
+		go func() {
+			runListenServers(addr)
+			monitor.wg.Done()
+		}()
 	}
 
 	if config.Tunnel != "" {
@@ -444,20 +163,39 @@ func run(cmd *cobra.Command, _ []string) {
 			config.MaxWaitingTunnels = 10
 		}
 		waitingChan = make(chan utils.Unit, config.MaxWaitingTunnels)
-		wg.Add(1)
 		startedServer = true
-		go runTunneler(addr)
+		monitor.wg.Add(1)
+		go func() {
+			runTunneler(addr)
+			monitor.wg.Done()
+		}()
 	}
 
 	if config.ServerPrint+config.ClientPrint != 0 {
-		printChan = make(chan string, 50)
+		printChan = make(chan PrintData, 50)
 		go listenPrint()
 	}
 
 	if !startedServer {
 		cmd.Usage()
 	}
-	wg.Wait()
+
+	// TODO: start monitor server
+	if config.MonitorServer != "" {
+		monitor.Config = config
+		go runMonitorServer()
+	}
+
+	sigCh := make(chan os.Signal, 5)
+	signal.Notify(sigCh, os.Interrupt)
+	go func() {
+		for range sigCh {
+			shutdown(true)
+		}
+	}()
+
+	monitor.Wait()
+	log.Print("finished running")
 }
 
 var (
@@ -470,11 +208,11 @@ var (
 )
 
 func runListenClients(addr *net.TCPAddr) {
-	defer wg.Done()
 	ln, err := net.ListenTCP("tcp", addr)
 	if err != nil {
 		log.Fatal("error listening: ", err)
 	}
+	clientListener.Store(ln)
 	defer ln.Close()
 
 	fmt.Printf("Listening for clients on %s...\n", addr)
@@ -482,9 +220,16 @@ func runListenClients(addr *net.TCPAddr) {
 	for i := 1; true; {
 		c, err := ln.AcceptTCP()
 		if err != nil {
+			if monitor.ShuttingDown.Load() {
+				break
+			}
 			log.Fatal("error accepting: ", err)
 		}
-		go handle(NewBufferedConn(c), i)
+		go func() {
+			monitor.AddClient()
+			defer monitor.RemoveClient()
+			handle(NewBufferedConn(c), i)
+		}()
 	}
 }
 
@@ -492,23 +237,24 @@ func runTunneler(addr *net.TCPAddr) {
 	const retryTime = 2
 	const maxErrCount = 5
 
-	defer wg.Done()
 	fmt.Printf("Tunneling to %s...\n", addr)
 	errCount := 0
 	// NOTE: i for testing/logging purposes
-	for i := -1; true; {
+	for i := -1; !monitor.ShuttingDown.Load(); {
 		if errCount == maxErrCount {
 			// TODO: retry timer flag
 			time.Sleep(time.Second * retryTime)
 		}
 		waitingChan <- utils.Unit{}
 		conn, err := net.DialTCP("tcp", nil, addr)
+		monitor.AddTotalTunnelConnectAttempts()
 		if err == nil {
 			if errCount >= maxErrCount {
 				log.Print("tunneling reconnected")
 			}
 			errCount = 0
-			go handleTunnel(NewBufferedConn(conn), i)
+			monitor.AddTotalTunnelsConnected()
+			go connectTunnel(NewBufferedConn(conn), i)
 			continue
 		}
 		<-waitingChan
@@ -530,7 +276,7 @@ func runTunneler(addr *net.TCPAddr) {
 }
 
 // NOTE: num for logging/testing purposes
-func handleTunnel(tunnel *BufferedConn, num int) {
+func connectTunnel(tunnel *BufferedConn, num int) {
 	// TODO: timeout?
 	var buf [4]byte
 	// Send tunnel header
@@ -601,7 +347,11 @@ func handleTunnel(tunnel *BufferedConn, num int) {
 		}
 	} else {
 		<-waitingChan
-		handle(tunnel, num)
+		func() {
+			monitor.AddTunnel()
+			defer monitor.RemoveTunnel()
+			handle(tunnel, num)
+		}()
 		return
 	}
 	<-waitingChan
@@ -624,13 +374,19 @@ func handle(client *BufferedConn, num int) {
 			select {
 			case server = <-tunnelChan:
 			case <-timer.C:
-				break
+				// NOTE: log something?
+				monitor.AddTunnelWaitTimeouts()
 			}
 			if server == nil {
+				// TODO: log something?
 				break
 			} else if checkTunnelReadiness(server, logErr) {
+				server.Close()
+				monitor.RemoveTunneled()
+				monitor.AddTunneledFailedReady()
 				break
 			}
+			server = nil
 		}
 		if !timer.Stop() {
 			<-timer.C
@@ -639,30 +395,30 @@ func handle(client *BufferedConn, num int) {
 			client.Close()
 			return
 		}
+		defer monitor.RemoveTunneled()
 	} else {
 		var err error
 		srvr, err := net.DialTCP("tcp", nil, connectAddr)
 		if err != nil {
 			logErr("error connecting to server: %v", err)
+			monitor.AddTotalConnectServerFails(err)
 			client.Close()
 			return
 		}
 		server = NewBufferedConn(srvr)
 	}
 
-	go pipe(client, server, clientPrintFunc)
-	pipe(server, client, serverPrintFunc)
+	go pipe(client, server, clientPrintFunc, false)
+	pipe(server, client, serverPrintFunc, true)
 }
 
-// Returns false if not ready (the passed conn will be closed)
+// Returns false if not ready (the passed conn will not be closed)
 func checkTunnelReadiness(
 	server *BufferedConn, logErr func(string, ...any),
 ) (ready bool) {
 	// Send ready bytes to tunnel
 	if _, err := utils.WriteAll(server, clientReadyBytes); err != nil {
 		logErr("error sending client ready bytes: %v", err)
-		server.Close()
-		server = nil
 		return
 	}
 
@@ -686,25 +442,30 @@ func checkTunnelReadiness(
 }
 
 func runListenServers(addr *net.TCPAddr) {
-	defer wg.Done()
 	ln, err := net.ListenTCP("tcp", addr)
 	if err != nil {
 		log.Fatal("error listening (tunnels): ", err)
 	}
+	serverListener.Store(ln)
 	defer ln.Close()
 
 	fmt.Printf("Listening for servers on %s...\n", addr)
 	for {
 		c, err := ln.AcceptTCP()
 		if err != nil {
+			if monitor.ShuttingDown.Load() {
+				break
+			}
 			log.Fatal("error accepting (tunnels): ", err)
 		}
 		//go handleServer(c)
+		monitor.AddTotalAcceptedServers()
 		handleServer(NewBufferedConn(c))
 	}
 }
 
 func handleServer(server *BufferedConn) {
+	// NOTE: monitor for specific errors/failures?
 	shouldClose := utils.NewT(true)
 	defer utils.DeferClose(shouldClose, server)
 
@@ -762,11 +523,12 @@ func handleServer(server *BufferedConn) {
 
 	*shouldClose = false
 	server.SetDeadline(time.Time{})
+	monitor.AddTunneled()
 	tunnelChan <- server
 }
 
 // Only prints and closes "from"
-func pipe(from, to *BufferedConn, pf PrintFunc) {
+func pipe(from, to *BufferedConn, pf PrintFunc, fromServer bool) {
 	defer from.Close()
 	fromAddrStr := from.RemoteAddr().String()
 	toAddrStr := to.RemoteAddr().String()
@@ -776,7 +538,7 @@ func pipe(from, to *BufferedConn, pf PrintFunc) {
 		if err != nil {
 			return
 		}
-		pf(buf[:n], fromAddrStr, toAddrStr)
+		pf(buf[:n], fromAddrStr, toAddrStr, fromServer)
 		if _, err := to.Write(buf[:n]); err != nil {
 			return
 		}
@@ -829,52 +591,40 @@ func readCheckPassword(r io.Reader) (bool, error) {
 	return true, nil
 }
 
-func listenPrint() {
-	for s := range printChan {
-		fmt.Print(s)
+func runMonitorServer() {
+	srvr := &http.Server{
+		Addr: config.MonitorServer,
+		Handler: (func() http.Handler {
+			r := jmux.NewRouter()
+			r.GetFunc("/stats", func(c *jmux.Context) {
+				c.RespHeader().Set("Content-Type", "application/json")
+				c.WriteJSON(&monitor)
+			})
+			return r
+		})(),
+		// TODO: set error log?
+	}
+	fmt.Printf("Running monitoring server on %s...\n", srvr.Addr)
+	if err := srvr.ListenAndServe(); err != nil {
+		log.Fatal("error running monitor server: ", err)
 	}
 }
 
-func noPrintFunc([]byte, string, string) {}
-
-func doPrintFunc(b []byte, from, to string) {
-	printChan <- fmt.Sprintf(
-		"%s => %s (%d bytes)\n"+
-			"-------------------\n"+
-			"%s\n"+
-			"===================\n",
-		from, to, len(b), b,
-	)
-}
-
-func bytesPrintFunc(b []byte, from, to string) {
-	printChan <- fmt.Sprintf(
-		"%s => %s (%d bytes)\n"+
-			"-------------------\n"+
-			"%v\n"+
-			"===================\n",
-		from, to, len(b), b,
-	)
-}
-
-func lowerHexBytesPrintFunc(b []byte, from, to string) {
-	printChan <- fmt.Sprintf(
-		"%s => %s (%d bytes)\n"+
-			"-------------------\n"+
-			"%x\n"+
-			"===================\n",
-		from, to, len(b), b,
-	)
-}
-
-func upperHexBytesPrintFunc(b []byte, from, to string) {
-	printChan <- fmt.Sprintf(
-		"%s => %s (%d bytes)\n"+
-			"-------------------\n"+
-			"%X\n"+
-			"===================\n",
-		from, to, len(b), b,
-	)
+func listenPrint() {
+	var err error
+	for data := range printChan {
+		if data.server {
+			_, err = fmt.Fprint(serverPrintFile, data.msg)
+			if err != nil {
+				log.Fatal("error writing to server file: ", err)
+			}
+		} else {
+			_, err = fmt.Fprint(clientPrintFile, data.msg)
+			if err != nil {
+				log.Fatal("error writing to client file: ", err)
+			}
+		}
+	}
 }
 
 func shouldIgnoreErr(err error) bool {
@@ -921,6 +671,23 @@ func getPassword() {
 		)
 	}
 	password = content
+}
+
+func shutdown(force bool) {
+	if monitor.ShuttingDown.Swap(true) {
+		if force {
+			log.Print("forcing shutdown...")
+			os.Exit(0)
+		}
+		return
+	}
+	log.Print("shutting down...")
+	if ln := clientListener.Load(); ln != nil {
+		ln.Close()
+	}
+	if ln := serverListener.Load(); ln != nil {
+		ln.Close()
+	}
 }
 
 type BufferedConn struct {
