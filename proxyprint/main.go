@@ -1,5 +1,6 @@
 // TODO: reuseaddr option
 // TODO: monitor server optional password (and allow HTTPS)
+// TODO: ping
 package main
 
 import (

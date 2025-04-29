@@ -90,13 +90,13 @@ func (mtr *Monitor) AddTotalAcceptedServers() uint64 {
 }
 
 func (mtr *Monitor) AddTunneled() (int64, uint64) {
-	mtr.wg.Add(1)
+	//mtr.wg.Add(1)
 	c := mtr.CurrentTunneled.Add(1)
 	t := mtr.TotalTunneled.Add(1)
 	return c, t
 }
 func (mtr *Monitor) RemoveTunneled() int64 {
-	mtr.wg.Done()
+	//mtr.wg.Done()
 	return mtr.CurrentTunneled.Add(-1)
 }
 
