@@ -36,8 +36,8 @@ var (
 	clientListener, serverListener atomic.Pointer[net.TCPListener]
 
 	printChan   chan PrintData
-	tunnelChan  chan *BufferedConn
-	waitingChan chan utils.Unit
+	tunnelChan  *Chan[*BufferedConn]
+	waitingChan *Chan[utils.Unit]
 
 	monitor Monitor
 
@@ -142,7 +142,7 @@ func run(cmd *cobra.Command, _ []string) {
 			config.MaxAcceptedServers = 10
 		}
 		shouldTunnel = true
-		tunnelChan = make(chan *BufferedConn, config.MaxAcceptedServers)
+		tunnelChan = NewChan[*BufferedConn](int(config.MaxAcceptedServers))
 		startedServer = true
 		monitor.wg.Add(1)
 		go func() {
@@ -163,7 +163,7 @@ func run(cmd *cobra.Command, _ []string) {
 		if config.MaxWaitingTunnels == 0 {
 			config.MaxWaitingTunnels = 10
 		}
-		waitingChan = make(chan utils.Unit, config.MaxWaitingTunnels)
+		waitingChan = NewChan[utils.Unit](int(config.MaxWaitingTunnels))
 		startedServer = true
 		monitor.wg.Add(1)
 		go func() {
@@ -181,7 +181,6 @@ func run(cmd *cobra.Command, _ []string) {
 		cmd.Usage()
 	}
 
-	// TODO: start monitor server
 	if config.MonitorServer != "" {
 		monitor.Config = config
 		go runMonitorServer()
@@ -246,7 +245,9 @@ func runTunneler(addr *net.TCPAddr) {
 			// TODO: retry timer flag
 			time.Sleep(time.Second * retryTime)
 		}
-		waitingChan <- utils.Unit{}
+		if !waitingChan.Send(utils.Unit{}) {
+			break
+		}
 		conn, err := net.DialTCP("tcp", nil, addr)
 		monitor.AddTotalTunnelConnectAttempts()
 		if err == nil {
@@ -259,7 +260,9 @@ func runTunneler(addr *net.TCPAddr) {
 			go connectTunnel(NewBufferedConn(conn), i)
 			continue
 		}
-		<-waitingChan
+		if _, isOpen := waitingChan.Recv(); !isOpen {
+			break
+		}
 		if errCount == maxErrCount {
 			continue
 		}
@@ -283,7 +286,7 @@ func connectTunnel(tunnel *BufferedConn, num int) {
 	shouldRun := utils.NewT(true)
 	defer utils.DeferFunc(shouldRun, func() {
 		tunnel.Close()
-		<-waitingChan
+		waitingChan.Recv()
 	})
 
 	// TODO: timeout?
@@ -323,7 +326,6 @@ func connectTunnel(tunnel *BufferedConn, num int) {
 
 	// Get response
 	if _, err := io.ReadFull(tunnel, buf[:]); err != nil {
-		// TODO: do a read full?
 		if !shouldIgnoreErr(err) {
 			log.Printf("error reading client password response bytes: %v", err)
 		}
@@ -334,7 +336,6 @@ func connectTunnel(tunnel *BufferedConn, num int) {
 
 	// Get ready bytes from server
 	if _, err := io.ReadFull(tunnel, buf[:]); err != nil {
-		// TODO: do a read full?
 		if !shouldIgnoreErr(err) {
 			log.Printf("error reading client ready bytes: %v", err)
 		}
@@ -349,13 +350,16 @@ func connectTunnel(tunnel *BufferedConn, num int) {
 
 	// Send ready bytes to server
 	if _, err := utils.WriteAll(tunnel, serverReadyBytes); err != nil {
-		if !shouldIgnoreErr(err) {
+		if true || !shouldIgnoreErr(err) {
 			log.Printf("error sending server ready bytes: %v", err)
 		}
 		return
 	}
+	waitingChan.Recv()
+	if monitor.ShuttingDown.Load() {
+		return
+	}
 	*shouldRun = false
-	<-waitingChan
 	monitor.AddTunnel()
 	defer monitor.RemoveTunnel()
 	handle(tunnel, num)
@@ -375,7 +379,7 @@ func handle(client *BufferedConn, num int) {
 		timer := time.NewTimer(time.Second * 10)
 		for {
 			select {
-			case server = <-tunnelChan:
+			case server = <-tunnelChan.Chan():
 			case <-timer.C:
 				// NOTE: log something?
 				monitor.AddTunnelWaitTimeouts()
@@ -384,13 +388,12 @@ func handle(client *BufferedConn, num int) {
 				// TODO: log something?
 				break
 			} else if checkTunnelReadiness(server, logErr) {
-				server.Close()
-				server = nil
-				monitor.RemoveTunneled()
-				monitor.AddTunneledFailedReady()
 				break
 			}
+			server.Close()
 			server = nil
+			monitor.RemoveTunneled()
+			monitor.AddTunneledFailedReady()
 		}
 		if !timer.Stop() {
 			<-timer.C
@@ -412,8 +415,29 @@ func handle(client *BufferedConn, num int) {
 		server = NewBufferedConn(srvr)
 	}
 
-	go pipe(client, server, clientPrintFunc, false)
+	go func() {
+		pipe(client, server, clientPrintFunc, false)
+	}()
 	pipe(server, client, serverPrintFunc, true)
+}
+
+// Only prints and closes both "from" and "to"
+func pipe(from, to *BufferedConn, pf PrintFunc, fromServer bool) {
+	defer from.Close()
+	defer to.Close()
+	fromAddrStr := from.RemoteAddr().String()
+	toAddrStr := to.RemoteAddr().String()
+	buf := make([]byte, config.Buffer)
+	for {
+		n, err := from.Read(buf[:])
+		if err != nil {
+			return
+		}
+		pf(buf[:n], fromAddrStr, toAddrStr, fromServer)
+		if _, err := to.Write(buf[:n]); err != nil {
+			return
+		}
+	}
 }
 
 // Returns false if not ready (the passed conn will not be closed)
@@ -429,7 +453,6 @@ func checkTunnelReadiness(
 	// Get ready bytes from tunnel
 	var buf [4]byte
 	if _, err := io.ReadFull(server, buf[:]); err != nil {
-		// TODO: do a read full?
 		if !shouldIgnoreErr(err) {
 			log.Printf("error reading server ready bytes: %v", err)
 		}
@@ -439,10 +462,9 @@ func checkTunnelReadiness(
 			"expected %v as server ready bytes, got %v",
 			serverReadyBytes, buf,
 		)
-	} else {
-		ready = true
+		return
 	}
-	return
+	return true
 }
 
 func runListenServers(addr *net.TCPAddr) {
@@ -528,24 +550,8 @@ func handleServer(server *BufferedConn) {
 	*shouldClose = false
 	server.SetDeadline(time.Time{})
 	monitor.AddTunneled()
-	tunnelChan <- server
-}
-
-// Only prints and closes "from"
-func pipe(from, to *BufferedConn, pf PrintFunc, fromServer bool) {
-	defer from.Close()
-	fromAddrStr := from.RemoteAddr().String()
-	toAddrStr := to.RemoteAddr().String()
-	buf := make([]byte, config.Buffer)
-	for {
-		n, err := from.Read(buf[:])
-		if err != nil {
-			return
-		}
-		pf(buf[:n], fromAddrStr, toAddrStr, fromServer)
-		if _, err := to.Write(buf[:n]); err != nil {
-			return
-		}
+	if !tunnelChan.Send(server) {
+		monitor.RemoveTunneled()
 	}
 }
 
@@ -691,6 +697,12 @@ func shutdown(force bool) {
 	}
 	if ln := serverListener.Load(); ln != nil {
 		ln.Close()
+	}
+	if waitingChan != nil {
+		waitingChan.Close()
+	}
+	if tunnelChan != nil {
+		tunnelChan.Close()
 	}
 }
 
