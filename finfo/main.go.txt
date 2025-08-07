@@ -1,6 +1,7 @@
 package main
 
 import (
+	"flag"
 	"fmt"
 	"io/fs"
 	"log"
@@ -12,8 +13,7 @@ import (
 	"sync"
 	"sync/atomic"
 
-	"github.com/johnietre/utils/go"
-	"github.com/spf13/cobra"
+  "github.com/spf13/cobra"
 )
 
 type SizeDenom uint64
@@ -64,10 +64,6 @@ func (sd SizeDenom) String() string {
 	return fmt.Sprintf("%d B", sd)
 }
 
-func (sd SizeDenom) Type() string {
-	return "string"
-}
-
 const (
 	B   SizeDenom = 1
 	KB            = 1_000
@@ -92,91 +88,175 @@ var (
 func main() {
 	log.SetFlags(0)
 
-	cmd := &cobra.Command{
-		Use:   "finfo",
-		Short: "A program to get a bit of file info (like size and last mod)",
-		Run:   run,
-	}
-	flags := cmd.Flags()
-	flags.VarP(
-		&sizeDenom, "size", "s",
+  cmd := &cobra.Command{
+    Use: "finfo",
+    Short: "A program to get a bit of file info (like size and last mod)",
+  }
+  flags := cmd.Flags()
+  flags.BoolVarP(
+    &recursive, "recursive", "r", false,
+    "If directory, get size of all subdirectories (recursive)",
+  )
+  flags.IntVarP(
+    &prec, "precision", "p", -1,
+    "Precision of output decimals (<0 for no limit)",
+  )
+  flags.BoolP(
+    "total", "t", false,
+    "Calculate the total size of all args",
+  )
+  flags.StringP(
+    "regex", "x", "",
+    "Regex expression to match paths against when calculate size",
+  )
+  flags.Bool(
+    "excl", false,
+    "Exclude regular expression matches",
+  )
+  flags.Bool(
+    "files", false, "Match only files with regular expressions",
+  )
+  flags.Bool(
+    "dirs", false, "Match only directories with regular expressions",
+  )
+
+	flag.Var(
+		&sizeDenom, "size",
 		"Size denomination (B/KB/KiB/MB/MiB/GB/GiB/Custom)",
 	)
-	flags.StringArray(
-		"path", nil,
-		"Explicitly specify path (useful for passing a path that looks like a flag; can be passed multiple times)",
-	)
-	flags.BoolVarP(
-		&recursive, "recursive", "r", false,
+	flag.BoolVar(
+		&recursive, "r", false,
 		"If directory, get size of all subdirectories (recursive)",
 	)
-	flags.IntVarP(
-		&prec, "precision", "p", -1,
-		"Precision of output decimals (<0 for no limit)",
+	flag.IntVar(
+		&prec, "p", -1,
+		"Precision of output decimals (-1 for no limit)",
 	)
-	flags.BoolP(
-		"total", "t", false,
-		"Calculate the total size of all args",
+	total := flag.Bool("total", false, "Calculate the total size of all args")
+	// Used only for when looping through the arguments since it can be passed
+	// multiple times
+	flag.String(
+		"path", "", "Explicitly specify path (can be passed multiple times)",
 	)
-	flags.StringP(
-		"regex", "x", "",
-		"Regex expression to match paths against when calculate size",
+	regexStr := flag.String(
+		"regex", "",
+		"Regex expression to match paths against when calculating size",
 	)
-	flags.Bool(
-		"excl", false,
-		"Exclude regular expression matches",
+	excludeMatch := flag.Bool(
+		"excl", false, "Exclude regular expression matches",
 	)
-	flags.Bool(
-		"files", false, "Match only files with regular expressions",
+	filesOnly := flag.Bool(
+		"files", false,
+		"Match only files with regular expressions; shouldn't pass --dirs with this flag",
 	)
-	flags.Bool(
-		"dirs", false, "Match only directories with regular expressions",
+	dirsOnly := flag.Bool(
+		"dirs", false,
+		"Match only directories with regular expressions; shouldn't pass --files with this flag",
 	)
-	cmd.MarkFlagsMutuallyExclusive("files", "dirs")
-
-	if err := cmd.Execute(); err != nil {
-		log.Fatal(err)
+	boolFlags := map[string]bool{
+		"r":     true,
+		"total": true,
+		"excl":  true,
+		"files": true,
+		"dirs":  true,
 	}
-}
 
-func run(cmd *cobra.Command, args []string) {
-	flags := cmd.Flags()
-	regexStr := utils.Must(flags.GetString("regex"))
-	excludeMatch := utils.Must(flags.GetBool("excl"))
-	filesOnly := utils.Must(flags.GetBool("files"))
-	dirsOnly := utils.Must(flags.GetBool("dirs"))
-	total := utils.Must(flags.GetBool("total"))
+	// Print help
+	if len(os.Args) == 2 && (os.Args[1] == "-h" || os.Args[1] == "--help") {
+		flag.Parse()
+	}
+	var args, paths []string
+	// Keeps track of whether the previous arg was a flag with a value yet to be
+	// passed
+	prevFlag := false
+	for i, l := 1, len(os.Args); i < l; i++ {
+		arg := os.Args[i]
+		if prevFlag {
+			prevFlag = false
+			args = append(args, arg)
+			continue
+		} else if arg[0] != '-' {
+			paths = append(paths, arg)
+			continue
+		}
+		// Get the flag name
+		name, value := "", ""
+		l := len(arg)
+		if l > 1 && arg[1] == '-' {
+			name = arg[2:]
+		} else {
+			name = arg[1:]
+		}
+		// Split value from flag
+		if index := strings.IndexByte(name, '='); index != -1 {
+			name, value = name[:index], name[index+1:]
+		} else {
+			prevFlag = true
+		}
+		// Check if it is the path flag
+		if name == "path" {
+			if value != "" {
+				// Add the value if it was defined with the flag
+				paths = append(paths, value)
+			} else if prevFlag {
+				// Get the next arg (the value) if it exists
+				if i != l-1 {
+					i++
+					paths = append(paths, os.Args[i+1])
+				} else {
+					// If this is the last flag passed but no value is passed afterwards
+					// (checked with `i != l - 1`), then throw an error. This can be done
+					// by just including it in the arguments passed to Parse() since it
+					// will throw an error when a flag is passed without a defined value.
+					// We can break since we know it's the last arg
+					args = append(args, arg)
+					break
+				}
+			}
+			prevFlag = false
+			continue
+		}
+		// See if the flag is defined
+		if flag.Lookup(name) != nil {
+			args = append(args, arg)
+			// No value will be defined in next arg if this is a boolean flag
+			prevFlag = !boolFlags[name] || value == ""
+		} else {
+			paths = append(paths, arg)
+			prevFlag = false
+		}
+	}
 
-	if regexStr != "" {
-		regex, err := regexp.Compile(regexStr)
+	flag.CommandLine.Parse(args)
+	if len(paths) == 0 {
+		log.Fatal("must provide path")
+	}
+
+	if *regexStr != "" {
+		regex, err := regexp.Compile(*regexStr)
 		if err != nil {
 			log.Fatal("invalid regex: ", err)
 		}
 		matchFunc = regex.MatchString
 	}
-	if excludeMatch {
+	if *excludeMatch {
 		f := matchFunc
 		matchFunc = func(s string) bool { return !f(s) }
 	}
-	if filesOnly {
+	if *filesOnly {
 		f := matchFunc
 		matchFunc = func(s string) bool {
 			l := len(s)
 			return l == 0 || s[l-1] == '/' || f(s)
 		}
 	}
-	if dirsOnly {
+	if *dirsOnly {
 		f := matchFunc
 		matchFunc = func(s string) bool {
 			l := len(s)
 			println(s, l == 0 || s[l-1] != '/' || f(s))
 			return l == 0 || s[l-1] != '/' || f(s)
 		}
-	}
-
-	paths := append(args, utils.Must(flags.GetStringArray("path"))...)
-	if len(paths) == 0 {
-		log.Fatal("must provide path")
 	}
 
 	for i, path := range paths {
@@ -197,12 +277,12 @@ func run(cmd *cobra.Command, args []string) {
 			wg.Wait()
 		}
 		printInfo(info, size)
-		if total {
+		if *total {
 			totalSize += size
 		}
 		size = 0
 	}
-	if total {
+	if *total {
 		fmt.Println(strings.Repeat("=", 40))
 		fmt.Println("Total Size:", makeSizeStr(totalSize))
 	}
