@@ -32,6 +32,8 @@ github.com/gorilla/websocket v1.4.1 h1:q7AeDBpnBk8AogcD4DSag/Ukw/KV+YhzLj2bP5HvK
 github.com/gorilla/websocket v1.4.1/go.mod h1:YR8l580nyteQvAITg2hZ9XVh4b55+EU/adAjf1fMHhE=
 github.com/inconshreveable/mousetrap v1.1.0 h1:wN+x4NVGpMsO7ErUn/mUI3vEoE6Jt13X2s0bqwp9tc8=
 github.com/inconshreveable/mousetrap v1.1.0/go.mod h1:vpF70FUmC8bwa3OWnCshd2FqLfsEA9PFc4w1p2J65bw=
+github.com/johnietre/go-jmux v0.0.0-20241231094248-d4891e13d9d2 h1:npL205mRgQw2IjqlWu9nxrMJ3HeayEPdu41hl9HON0M=
+github.com/johnietre/go-jmux v0.0.0-20241231094248-d4891e13d9d2/go.mod h1:+rirwe5r7xZqXVdnFSOM1PotCdbNFSaknd6I6AiowFA=
 github.com/johnietre/utils/go v0.0.0-20240421061507-ea56616211cd h1:tkedAjivGAy6jKw5290rpmtIsFtRamFxatQHfunD6o0=
 github.com/johnietre/utils/go v0.0.0-20240421061507-ea56616211cd/go.mod h1:EIHQk2LLgdrOzVqAfAAmDOwjQUB+j0lLB22TNRE0Xyk=
 github.com/johnietre/utils/go v0.0.0-20240712084910-4fb386379ba6 h1:/s3T7OW8kDzGMEVSTJIshu+EQEIohjYZ6aOGYor0dhs=

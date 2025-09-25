@@ -56,6 +56,8 @@ A set of Unix command-line tools/applications
 
 ## jtcmds
 - [ ] Clean build dirs
+- [ ] Fix list uninstalled command
+- [ ] pickrand help
 
 ## Minimeyer
 - [ ] Allow output filenames to be specified during process creation

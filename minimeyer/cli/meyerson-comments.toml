@@ -12,6 +12,9 @@ env = []
 # The name to display on the webpage.
 server-name = ""
 
+# The directory to start new processes in (and changes working directory of entire program).
+dir = ""
+
 # The processes
 # Processes are looped through sequentially, so putting a delay on one will
 # cause the others to execute after that delay has passed as well

@@ -30,6 +30,7 @@ import (
 var (
 	app            = NewApp()
 	errProcRunning = fmt.Errorf("process running already")
+	startingDir    string
 )
 
 func NewCliCmd() *cobra.Command {
@@ -91,6 +92,11 @@ func NewCliCmd() *cobra.Command {
 		"server-name", "",
 		"The name of the web server to display",
 	)
+	flags.StringVar(
+		&startingDir,
+		"dir", "",
+		"Directory to start processes in (when not specified per process)",
+	)
 	cliCmd.MarkFlagsRequiredTogether("html", "js", "css")
 
 	return cliCmd
@@ -113,8 +119,14 @@ func Run(cmd *cobra.Command, args []string) {
 		webPassword = &pwd
 	}
 
-	if noCli && addr == "" {
-		log.Fatal(`Must provide "addr" with "no-cli"`)
+	if noCli && addr == "" && configPath == "" {
+		log.Fatal(`Must provide "addr" with "no-cli" when there is no config file passed`)
+	}
+
+	if startingDir != "" {
+		if err := os.Chdir(startingDir); err != nil {
+			log.Fatal("Error changing working directory: ", err)
+		}
 	}
 
 	intChan := make(chan os.Signal, 1)
@@ -231,6 +243,9 @@ func Run(cmd *cobra.Command, args []string) {
 		if addr != "" {
 			config.ServerAddr = addr
 		}
+		if config.ServerAddr == "" && noCli {
+			log.Fatal(`Must provide "addr" in CLI arg or with config when using "no-cli"`)
+		}
 		app = AppFromConfig(config)
 		if outDir != "" {
 			app.outDir = outDir
@@ -239,7 +254,14 @@ func Run(cmd *cobra.Command, args []string) {
 			Println("Starting processes...")
 			app.StartProcs()
 		}
-		handleInput()
+		signalCh := make(chan os.Signal)
+		if !noCli {
+			handleInput()
+			close(signalCh)
+		} else {
+			signal.Notify(signalCh, os.Interrupt)
+		}
+		<-signalCh
 		app.Wait()
 		return
 	}
@@ -596,6 +618,7 @@ type Config struct {
 	OutDir     string     `json:"outDir,omitempty" toml:"out-dir"`
 	Env        []string   `json:"env,omitempty" toml:"env"`
 	ServerName string     `json:"serverName,omitempty" toml:"server-name"`
+	Dir        string     `json:"dir,omitempty" toml:"dir"`
 	Procs      []*Process `json:"procs,omitempty" toml:"proc"`
 }
 
@@ -618,6 +641,12 @@ func AppFromConfig(config *Config) *App {
 	app.env = append(app.env, config.Env...)
 	app.outDir = config.OutDir
 	app.nextProcNum = 1
+	if config.Dir != "" && startingDir == "" {
+		startingDir = config.Dir
+		if err := os.Chdir(startingDir); err != nil {
+			log.Fatal("Error changing working directory: ", err)
+		}
+	}
 	for _, proc := range config.Procs {
 		app.AddProc(proc)
 	}
@@ -739,9 +768,8 @@ type Process struct {
 	OutFilename string        `json:"outFilename,omitempty" toml:"out-filename"`
 	ErrFilename string        `json:"errFilename,omitempty" toml:"err-filename"`
 	Delay       time.Duration `json:"delay,omitempty" toml:"delay"`
-	// TODO: use
-	Dir string `json:"dir,omitempty" toml:"dir"`
-	Num int    `json:"num" toml:"-"`
+	Dir         string        `json:"dir,omitempty" toml:"dir"`
+	Num         int           `json:"num" toml:"-"`
 
 	app              *App
 	cmd              *exec.Cmd
@@ -774,6 +802,10 @@ func (p *Process) populateCmd() {
 	}
 	ctx, cancel := context.WithCancel(context.Background())
 	p.cmd = exec.CommandContext(ctx, p.Program, p.Args...)
+	p.cmd.Dir = startingDir
+	if p.Dir != "" {
+		p.cmd.Dir = p.Dir
+	}
 	p.cancelFunc, p.cmd.Env = cancel, p.Env
 }
 
@@ -920,7 +952,7 @@ func readline(prompt ...string) string {
 	}
 	line, err := stdinReader.ReadString('\n')
 	if err != nil {
-		panic(err)
+		log.Fatal("Error reading stdin: ", err)
 	}
 	return strings.TrimSpace(line)
 }

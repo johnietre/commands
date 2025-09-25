@@ -111,7 +111,12 @@ const App = {
     killRestartProc(num) {
       this.sendMsg(newMsg(Action.KillRestart, num));
     },
-    delProc(num) { this.sendMsg(newMsg(Action.Del, num)); },
+    delProc(num) {
+      if (!confirm(`Delete Process ${num}?`)) {
+        return;
+      }
+      this.sendMsg(newMsg(Action.Del, num));
+    },
     cloneProc(proc) {
       Object.assign(this.proc, proc);
       delete this.proc.num;
@@ -139,6 +144,7 @@ const App = {
       case Action.Connected:
         if (this.srvrName === "" && msg.content) {
           this.srvrName = msg.content;
+          document.title += " - " + this.srvName;
         }
         this.refreshProcs();
         this.getGlobalEnv();

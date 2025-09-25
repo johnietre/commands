@@ -1,4 +1,5 @@
-// Multiple sort (e.g., by size, then name)
+// TODO: Multiple sort (e.g., by size, then name)
+// TODO: exit code (1 on any error?)
 package main
 
 import (
@@ -233,6 +234,9 @@ func run(cmd *cobra.Command, args []string) {
 		})
 	}
 	for i, out := range outputs {
+		if out.info == nil {
+			continue
+		}
 		if i != 0 {
 			fmt.Println(strings.Repeat("=", 40))
 		}

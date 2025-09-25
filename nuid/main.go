@@ -86,8 +86,8 @@ func handleBcrypt(args []string) {
 	)
 	flagSet.Parse(args)
 
-	if bargs := flagSet.Args(); len(args) != 0 {
-		*input = bargs[0]
+	if trailing := flagSet.Args(); len(trailing) != 0 {
+		*input = trailing[0]
 	}
 
 	hash, err := bcrypt.GenerateFromPassword([]byte(*input), *cost)

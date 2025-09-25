@@ -1,7 +1,10 @@
+// TODO: allow max recursion (depth) to be passed
 // TODO: replace file names
 // TODO: Count occurrences of file name matches
 // TODO: Handle InvalidData errors
 // TODO: When cleaning cargo, it's possible a file is removed, then attempted to be accessed.
+// TODO: Ignore dirs
+// TODO: not searching last line of cert file
 use clap::Parser;
 use crossbeam::channel::{unbounded, Receiver, Sender};
 use regex::Regex;
@@ -139,7 +142,7 @@ impl App {
             };
             if md.is_dir() {
                 self.search_dir(path, worker_tx, &results_tx);
-            } else if md.is_file() {
+            } else if md.is_file() && !self.args.dirs {
                 self.search_file(path, &results_tx);
             }
         }
@@ -181,6 +184,7 @@ impl App {
                     continue;
                 }
             };
+            let is_dir = ftype.is_dir();
             if ftype.is_symlink() {
                 continue;
             }
@@ -216,19 +220,21 @@ impl App {
                     }
                 }
             }
-            if self.args.content && !ftype.is_dir() {
+            if self.args.content && !is_dir && !self.args.dirs {
                 self.search_file(full_path, results_tx);
                 continue;
             } else if !self.args.content && self.args.replace.is_none() {
-                if self.what.matches(name) {
-                    let output = if ftype.is_dir() {
-                        format!("{}/", full_path.display())
-                    } else {
-                        format!("{}", full_path.display())
-                    };
-                    if results_tx.send(output).is_err() {
-                        eprintln!("fatal error: results receiver has been dropped");
-                        exit(1);
+                if is_dir != self.args.files && ftype.is_file() != self.args.dirs {
+                    if self.what.matches(name) {
+                        let output = if ftype.is_dir() {
+                            format!("{}/", full_path.display())
+                        } else {
+                            format!("{}", full_path.display())
+                        };
+                        if results_tx.send(output).is_err() {
+                            eprintln!("fatal error: results receiver has been dropped");
+                            exit(1);
+                        }
                     }
                 }
             }
@@ -246,16 +252,8 @@ impl App {
 
     fn search_file(&self, path: impl AsRef<Path>, results_tx: &Sender<String>) {
         let path = path.as_ref();
-        if let Some(ext) = path.extension() {
-            if self
-                .args
-                .ignore_exts
-                .iter()
-                .position(|s| s.as_os_str() == ext)
-                .is_some()
-            {
-                return;
-            }
+        if !self.args.should_search_file(path) {
+            return;
         }
         match infer::get_from_path(&path) {
             Ok(Some(kind)) => {
@@ -493,8 +491,20 @@ struct Args {
     replace: Option<String>,
 
     /// Ignored file types
-    #[arg(long)]
+    #[arg(long, group = "file-filter")]
     ignore_exts: Vec<std::ffi::OsString>,
+
+    /// Only search files with the given extensions.
+    #[arg(long, group = "file-filter")]
+    only_exts: Vec<std::ffi::OsString>,
+
+    /// Only search directories (meaning file contents can't be searched).
+    #[arg(long, group = "entry-type")]
+    dirs: bool,
+
+    /// Only search files.
+    #[arg(long, group = "entry-type")]
+    files: bool,
 
     /*
     /// Ignored paths
@@ -511,4 +521,22 @@ struct Args {
 
     /// Files/directories to search
     paths: Vec<PathBuf>,
+}
+
+impl Args {
+    fn should_search_file(&self, path: impl AsRef<Path>) -> bool {
+        let path = path.as_ref();
+        let Some(ext) = path.extension() else {
+            return self.only_exts.len() == 0;
+        };
+        if self.only_exts.len() != 0 {
+            return self.only_exts.iter().any(|e| e == ext);
+        }
+        self.ignore_exts.iter().all(|e| e != ext)
+    }
+
+    #[allow(dead_code)]
+    fn should_search_dir(&self, path: impl AsRef<Path>) -> bool {
+        todo!()
+    }
 }

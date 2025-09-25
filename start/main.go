@@ -1,7 +1,6 @@
 package main
 
 import (
-	"flag"
 	"fmt"
 	"log"
 	"os"
@@ -12,29 +11,11 @@ import (
 	"strings"
 	"syscall"
 	"text/template"
+
+	"github.com/spf13/cobra"
 )
 
 var tempPath string
-
-var exts = map[string]string{
-	".c":  "c",
-	".cc": "cc", ".cpp": "cc", ".c++": "cc",
-	".erl": "erl",
-	".f":   "f", ".f77": "f", ".f90": "f", ".f95": "f",
-	".go": "go",
-	".h":  "h", ".hpp": "h", ".h++": "h",
-	".htm": "htm", ".html": "htm",
-	".jav": "jav", ".java": "jav",
-	".proto": "proto",
-	".pl":    "pl",
-	".py":    "py",
-	".rs":    "rs",
-	".sh":    "sh",
-}
-
-var scriptFiles = map[string]bool{
-	".pl": true, ".py": true, ".sh": true,
-}
 
 func init() {
 	_, thisFile, _, ok := runtime.Caller(0)
@@ -46,84 +27,97 @@ func init() {
 
 func main() {
 	log.SetFlags(0)
-
-	// Create the flags
 	boolFlags := make(map[string]*bool, 8)
-	boolFlags["-b"] = flag.Bool("b", false, "Create both a header and source file (C/C++)")
-	boolFlags["-w"] = flag.Bool("w", false, "Overwrite existing file if it exists")
-	boolFlags["-a"] = flag.Bool("a", false, "Open file with Atom")
-	boolFlags["-c"] = flag.Bool("c", false, "Open file with VSCode")
-	boolFlags["-n"] = flag.Bool("n", false, "Open file with Nano")
-	boolFlags["-o"] = flag.Bool("o", false, "Open file with default app")
-	boolFlags["-v"] = flag.Bool("v", false, "Open file in Vim")
-	boolFlags["-nv"] = flag.Bool("nv", false, "Open file in Neovim")
-	boolFlags["-r"] = flag.Bool("r", false, "Start empty file, clearing old one if it exists")
-	editorPtr := flag.String("e", "", "Editor to open file with")
-	flag.Usage = usageFunc
-	flag.Parse()
 
-	// Get the files and any flags not picked up after parsing
-	filepaths, prev, editor := []string{}, "", *editorPtr
-	for _, arg := range flag.Args() {
-		if f := boolFlags[arg]; f != nil {
-			*f = true
-		} else {
-			if arg[0] == '-' && arg != "-e" {
-				log.Fatalf("invalid flag: %s", arg)
-			} else if prev == "-e" {
-				if editor == "" {
-					editor = arg
-				}
-			} else {
-				filepaths = append(filepaths, arg)
-			}
-		}
-		prev = arg
-	}
-
-	// Set editor argument/variable
-	if editor == "" {
-		if *(boolFlags["-a"]) {
-			editor = "atom"
-		} else if *(boolFlags["-c"]) {
-			editor = "code"
-		} else if *(boolFlags["-n"]) {
-			editor = "nano"
-		} else if *(boolFlags["-o"]) {
-			editor = "open"
-		} else if *(boolFlags["-v"]) {
-			editor = "vim"
-		} else if *(boolFlags["-nv"]) {
-			editor = "nvim"
-		}
-	}
-
-	// Create the file(s)
-	if len(filepaths) == 1 {
-		if err := createFile(filepaths[0], boolFlags); err != nil {
-			log.Println(err)
-			if !strings.HasSuffix(err.Error(), "already exists") {
+	rootCmd := &cobra.Command{
+		Use:                   "start [FLAGS] <FILES...>",
+		Short:                 "Start a file(s) based on a template",
+		Long:                  "Start a file(s) based on a template for a given language. Accepted filetypes can be printed using the --filetypes flag.",
+		DisableFlagsInUseLine: true,
+		Run: func(cmd *cobra.Command, args []string) {
+			if b, _ := cmd.Flags().GetBool("filetypes"); b {
+				fmt.Println(strings.Join(getFiletypeHelp(), "\n"))
 				return
 			}
-		}
-		openEditor(editor, filepaths[0])
-	} else if len(filepaths) == 0 {
-		log.Fatal("must specify file(s)")
-	} else {
-		for _, filepath := range filepaths {
-			if err := createFile(filepath, boolFlags); err != nil {
-				log.Println(err)
+
+			editor, _ := cmd.Flags().GetString("editor")
+			filepaths := args
+
+			// Set editor argument/variable
+			if editor == "" {
+				if *boolFlags["-a"] {
+					editor = "atom"
+				} else if *boolFlags["-c"] {
+					editor = "code"
+				} else if *boolFlags["-n"] {
+					editor = "nano"
+				} else if *boolFlags["-o"] {
+					editor = "open"
+				} else if *boolFlags["-v"] {
+					editor = "vim"
+				} else if *boolFlags["-V"] {
+					editor = "nvim"
+				} else if *boolFlags["-E"] {
+					editor = "emacs"
+				}
 			}
-		}
+
+			// Create the file(s)
+			if len(filepaths) == 1 {
+				if err := createFile(filepaths[0], boolFlags); err != nil {
+					log.Println(err)
+					if !strings.HasSuffix(err.Error(), "already exists") {
+						return
+					}
+				}
+				openEditor(editor, filepaths[0])
+			} else if len(filepaths) == 0 {
+				log.Fatal("must specify file(s)")
+			} else {
+				for _, filepath := range filepaths {
+					if err := createFile(filepath, boolFlags); err != nil {
+						log.Println(err)
+					}
+				}
+			}
+		},
+	}
+	flags := rootCmd.Flags()
+	flags.Bool("filetypes", false, "Print filetype mappings")
+	boolFlags["-b"] = flags.BoolP(
+		"both", "b", false,
+		"Create both a header and source file (C/C++)",
+	)
+	boolFlags["-w"] = flags.BoolP("overwrite", "w", false, "Overwrite existing file if it exsts")
+	boolFlags["-a"] = flags.BoolP("atom", "a", false, "Open file with Atom")
+	boolFlags["-c"] = flags.BoolP("vsc", "c", false, "Open file with VSCode")
+	boolFlags["-n"] = flags.BoolP("nano", "n", false, "Open file with Nano")
+	boolFlags["-o"] = flags.BoolP("open", "o", false, "Open file with default app")
+	boolFlags["-v"] = flags.BoolP("vim", "v", false, "Open file with Vim")
+	boolFlags["-V"] = flags.BoolP("neovim", "V", false, "Open file with Neovim")
+	boolFlags["-E"] = flags.BoolP("emacs", "E", false, "Open file with Emacs")
+	flags.StringP("editor", "e", "", "Editor to open file with")
+	boolFlags["-r"] = flags.BoolP(
+		"empty", "r", false,
+		"Start empty file, clearing old one if it exists",
+	)
+	rootCmd.MarkFlagsMutuallyExclusive(
+		"open", "atom", "vsc",
+		"nano", "vim", "neovim", "emacs",
+		"editor",
+	)
+
+	if err := rootCmd.Execute(); err != nil {
+		log.Fatal(err)
 	}
 }
 
 func createFile(filepath string, boolFlags map[string]*bool) error {
-	if *(boolFlags["-r"]) {
+	if *boolFlags["-r"] {
 		// Create the new empty file regargless of whether it exists or not
 		_, err := os.Create(filepath)
 		return err
-	} else if !(*(boolFlags["-w"])) {
+	} else if !*(boolFlags["-w"]) {
 		// Return an error if the file exists and isn't meant to be overwritten
 		if _, err := os.Stat(filepath); err == nil {
 			return fmt.Errorf("%s already exists", filepath)
@@ -137,7 +131,7 @@ func createFile(filepath string, boolFlags map[string]*bool) error {
 		_, err := os.Create(filepath)
 		return err
 	}
-	hidden := (name[0] == '.')
+	hidden := name[0] == '.'
 	if hidden {
 		name = name[1:]
 	}
@@ -174,29 +168,30 @@ func createFile(filepath string, boolFlags map[string]*bool) error {
 		return err
 	}
 	defer file.Close()
-	if temp.Execute(file, replace); err != nil {
+	if err := temp.Execute(file, replace); err != nil {
 		return err
 	}
 	// Make the file executable if it's a script
-	if scriptFiles[filetype] {
+	if scriptExts[filetype] {
 		if err := exec.Command("chmod", "u+x", filepath).Run(); err != nil {
 			log.Println(err)
 		}
 	}
 
 	// Create the file for the h or c/cc file if the -b (both) flag is passed
-	if *(boolFlags["-b"]) {
+	if *boolFlags["-b"] {
 		if filetype == "h" {
 			if hidden {
 				name = "." + name
 			}
-			ext = strings.ReplaceAll(ext, "c", "h")
-			otherFile, err := os.Create(name + ext)
+			newExt := strings.ReplaceAll(ext, "h", "c")
+			otherFile, err := os.Create(name + newExt)
 			if err != nil {
 				return err
 			}
 			defer otherFile.Close()
-			if _, err := fmt.Fprintf(file, "#include \"%s\"\n", name+ext); err != nil {
+			_, err = fmt.Fprintf(otherFile, "#include \"%s\"\n", name+ext)
+			if err != nil {
 				return err
 			}
 		} else if filetype == "c" || filetype == "cc" {
@@ -218,7 +213,7 @@ func createFile(filepath string, boolFlags map[string]*bool) error {
 				return err
 			}
 			defer otherFile.Close()
-			if err := temp.Execute(file, replace); err != nil {
+			if err := temp.Execute(otherFile, replace); err != nil {
 				return err
 			}
 		}
@@ -249,15 +244,28 @@ func openEditor(editor, filepath string) {
 	os.Exit(0)
 }
 
-func usageFunc() {
-	clof := func(format string, args ...interface{}) {
-		fmt.Fprintf(flag.CommandLine.Output(), format, args...)
-	}
-	clof("Usage of %s [files] [options]:\n", os.Args[0])
-	flag.PrintDefaults()
-	// Print out the template names and extention mappings
-	clof("File extensions with templates:")
-	filetypes, filetypeArr := make(map[string][]string), make([]string, 1)
+var exts = map[string]string{
+	".c":  "c",
+	".cc": "cc", ".cpp": "cc", ".c++": "cc", ".cxx": "cc",
+	".erl": "erl",
+	".f":   "f", ".f77": "f", ".f90": "f", ".f95": "f",
+	".go": "go",
+	".h":  "h", ".hpp": "h", ".h++": "h", ".hxx": "h",
+	".htm": "htm", ".html": "htm",
+	".jav": "jav", ".java": "jav",
+	".proto": "proto",
+	".pl":    "pl",
+	".py":    "py",
+	".rs":    "rs",
+	".sh":    "sh",
+}
+
+var scriptExts = map[string]bool{
+	".pl": true, ".py": true, ".sh": true,
+}
+
+func getFiletypeHelp() []string {
+	filetypes, filetypeArr := make(map[string][]string), make([]string, 0)
 	for ext, filetype := range exts {
 		if _, ok := filetypes[filetype]; !ok {
 			filetypeArr = append(filetypeArr, filetype)
@@ -265,9 +273,48 @@ func usageFunc() {
 		filetypes[filetype] = append(filetypes[filetype], ext)
 	}
 	sort.Strings(filetypeArr)
+	res := []string{}
 	for _, filetype := range filetypeArr {
 		sort.Strings(filetypes[filetype])
-		clof("  %s\t%s\n", filetype, strings.Join(filetypes[filetype], ", "))
+		lang := filetypeToLang(filetype)
+		res = append(
+			res,
+			fmt.Sprintf("%s: %s", lang, strings.Join(filetypes[filetype], ", ")),
+		)
+	}
+	return res
+}
+
+func filetypeToLang(ft string) string {
+	switch ft {
+	case "c":
+		return "C"
+	case "cc":
+		return "C++"
+	case "erl":
+		return "Erlang"
+	case "f":
+		return "Fortran"
+	case "go":
+		return "Go"
+	case "h":
+		return "C/C++ Header File"
+	case "htm":
+		return "HTML"
+	case "jav":
+		return "Java"
+	case "proto":
+		return "Protobuf"
+	case "pl":
+		return "Perl"
+	case "py":
+		return "Python"
+	case "rs":
+		return "Rust"
+	case "sh":
+		return "Shell"
+	default:
+		panic("unknown filetype: " + ft)
 	}
 }
 

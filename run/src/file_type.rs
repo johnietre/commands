@@ -1,3 +1,5 @@
+// TODO: Add shell files (sh, zsh, bash, etc) and check if they have execute permissions
+
 use crate::args::*;
 use crate::run_funcs::*;
 
