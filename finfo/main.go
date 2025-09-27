@@ -23,7 +23,8 @@ import (
 )
 
 var (
-	sizeDenom             = B
+	//sizeDenom             = B
+	sizeDenom             = XB
 	sort                  = SortNone
 	recursive             = false
 	prec                  = -1
@@ -287,7 +288,7 @@ func doJob(job Job) {
 	}
 	job.output.info = info
 	if !info.IsDir() {
-		size = uint64(info.Size())
+		job.size.Add(uint64(info.Size()))
 	} else {
 		doJobDir(job)
 	}
@@ -375,120 +376,119 @@ func makeSizeStr(size uint64) string {
 	return makeSizeStrFor(size, sizeDenom)
 }
 
-func makeSizeStrFor(size uint64, denom SizeDenom) (sizeStr string) {
+func makeSizeStrFor(usize uint64, denom SizeDenom) (sizeStr string) {
+	ssize := SizeDenom(usize)
 	switch denom {
 	case B:
-		sizeStr = commas(size) + " B"
+		sizeStr = commas(uint64(ssize)) + " B"
 	case KB:
-		sizeStr = commas(size / KB)
-		if rem := size % KB; rem != 0 {
+		sizeStr = commas(uint64(ssize / KB))
+		if rem := ssize % KB; rem != 0 {
 			sizeStr += strconv.FormatFloat(float64(rem)/float64(KB), 'f', prec, 64)[1:]
 		}
 		sizeStr += " KB"
 	case KiB:
-		sizeStr = commas(size / KiB)
-		if rem := size % KiB; rem != 0 {
+		sizeStr = commas(uint64(ssize / KiB))
+		if rem := ssize % KiB; rem != 0 {
 			sizeStr += strconv.FormatFloat(float64(rem)/float64(KiB), 'f', prec, 64)[1:]
 		}
 		sizeStr += " KiB"
 	case MB:
-		sizeStr = commas(size / MB)
-		if rem := size % MB; rem != 0 {
+		sizeStr = commas(uint64(ssize / MB))
+		if rem := ssize % MB; rem != 0 {
 			sizeStr += strconv.FormatFloat(float64(rem)/float64(MB), 'f', prec, 64)[1:]
 		}
 		sizeStr += " MB"
 	case MiB:
-		sizeStr = commas(size / MiB)
-		if rem := size % MiB; rem != 0 {
+		sizeStr = commas(uint64(ssize / MiB))
+		if rem := ssize % MiB; rem != 0 {
 			sizeStr += strconv.FormatFloat(float64(rem)/float64(MiB), 'f', prec, 64)[1:]
 		}
 		sizeStr += " MiB"
 	case GB:
-		sizeStr = commas(size / GB)
-		if rem := size % GB; rem != 0 {
+		sizeStr = commas(uint64(ssize / GB))
+		if rem := ssize % GB; rem != 0 {
 			sizeStr += strconv.FormatFloat(float64(rem)/float64(GB), 'f', prec, 64)[1:]
 		}
 		sizeStr += " GB"
 	case GiB:
-		sizeStr = commas(size / GiB)
-		if rem := size % GiB; rem != 0 {
+		sizeStr = commas(uint64(ssize / GiB))
+		if rem := ssize % GiB; rem != 0 {
 			sizeStr += strconv.FormatFloat(float64(rem)/float64(GiB), 'f', prec, 64)[1:]
 		}
 		sizeStr += " GiB"
 	case TB:
-		sizeStr = commas(size / TB)
-		if rem := size % TB; rem != 0 {
+		sizeStr = commas(uint64(ssize / TB))
+		if rem := ssize % TB; rem != 0 {
 			sizeStr += strconv.FormatFloat(float64(rem)/float64(TB), 'f', prec, 64)[1:]
 		}
 		sizeStr += " TB"
 	case TiB:
-		sizeStr = commas(size / TiB)
-		if rem := size % TiB; rem != 0 {
+		sizeStr = commas(uint64(ssize / TiB))
+		if rem := ssize % TiB; rem != 0 {
 			sizeStr += strconv.FormatFloat(float64(rem)/float64(TiB), 'f', prec, 64)[1:]
 		}
 		sizeStr += " TiB"
 	case PB:
-		sizeStr = commas(size / PB)
-		if rem := size % PB; rem != 0 {
+		sizeStr = commas(uint64(ssize / PB))
+		if rem := ssize % PB; rem != 0 {
 			sizeStr += strconv.FormatFloat(float64(rem)/float64(PB), 'f', prec, 64)[1:]
 		}
 		sizeStr += " PB"
 	case PiB:
-		sizeStr = commas(size / PiB)
-		if rem := size % PiB; rem != 0 {
+		sizeStr = commas(uint64(ssize / PiB))
+		if rem := ssize % PiB; rem != 0 {
 			sizeStr += strconv.FormatFloat(float64(rem)/float64(PiB), 'f', prec, 64)[1:]
 		}
 		sizeStr += " PiB"
 	case EB:
-		sizeStr = commas(size / EB)
-		if rem := size % EB; rem != 0 {
+		sizeStr = commas(uint64(ssize / EB))
+		if rem := ssize % EB; rem != 0 {
 			sizeStr += strconv.FormatFloat(float64(rem)/float64(EB), 'f', prec, 64)[1:]
 		}
 		sizeStr += " EB"
 	case EiB:
-		sizeStr = commas(size / EiB)
-		if rem := size % EiB; rem != 0 {
+		sizeStr = commas(uint64(ssize / EiB))
+		if rem := ssize % EiB; rem != 0 {
 			sizeStr += strconv.FormatFloat(float64(rem)/float64(EiB), 'f', prec, 64)[1:]
 		}
 		sizeStr += " EiB"
 	case XB:
-		ssize := SizeDenom(size)
 		if ssize >= EB {
-			return makeSizeStrFor(size, EB)
+			return makeSizeStrFor(usize, EB)
 		} else if ssize >= PB {
-			return makeSizeStrFor(size, PB)
+			return makeSizeStrFor(usize, PB)
 		} else if ssize >= TB {
-			return makeSizeStrFor(size, TB)
+			return makeSizeStrFor(usize, TB)
 		} else if ssize >= GB {
-			return makeSizeStrFor(size, GB)
+			return makeSizeStrFor(usize, GB)
 		} else if ssize >= MB {
-			return makeSizeStrFor(size, MB)
+			return makeSizeStrFor(usize, MB)
 		} else if ssize >= KB {
-			return makeSizeStrFor(size, KB)
+			return makeSizeStrFor(usize, KB)
 		} else {
-			return makeSizeStrFor(size, B)
+			return makeSizeStrFor(usize, B)
 		}
 	case XiB:
-		ssize := SizeDenom(size)
 		if ssize >= EiB {
-			return makeSizeStrFor(size, EiB)
+			return makeSizeStrFor(usize, EiB)
 		} else if ssize >= PiB {
-			return makeSizeStrFor(size, PiB)
+			return makeSizeStrFor(usize, PiB)
 		} else if ssize >= TiB {
-			return makeSizeStrFor(size, TiB)
+			return makeSizeStrFor(usize, TiB)
 		} else if ssize >= GiB {
-			return makeSizeStrFor(size, GiB)
+			return makeSizeStrFor(usize, GiB)
 		} else if ssize >= MiB {
-			return makeSizeStrFor(size, MiB)
+			return makeSizeStrFor(usize, MiB)
 		} else if ssize >= KiB {
-			return makeSizeStrFor(size, KiB)
+			return makeSizeStrFor(usize, KiB)
 		} else {
-			return makeSizeStrFor(size, B)
+			return makeSizeStrFor(usize, B)
 		}
 	default:
-		sd := uint64(sizeDenom)
-		sizeStr = commas(size / sd)
-		if rem := size % sd; rem != 0 {
+		sd := sizeDenom
+		sizeStr = commas(uint64(ssize / sd))
+		if rem := ssize % sd; rem != 0 {
 			sizeStr += strconv.FormatFloat(float64(rem)/float64(sd), 'f', prec, 64)[1:]
 		}
 		sizeStr += fmt.Sprintf(" /%d B", sd)
@@ -596,20 +596,20 @@ func (sd SizeDenom) Type() string {
 
 const (
 	B   SizeDenom = 1
-	KB            = 1_000
-	KiB           = 1 << 10
-	MB            = 1_000_000
-	MiB           = 1 << 20
-	GB            = 1_000_000_000
-	GiB           = 1 << 30
-	TB            = 1_000_000_000_000
-	TiB           = 1 << 40
-	PB            = 1_000_000_000_000_000
-	PiB           = 1 << 50
-	EB            = 1_000_000_000_000_000_000
-	EiB           = 1 << 60
-	XB            = (1 << 64) - 1
-	XiB           = (1 << 64) - 2
+	KB  SizeDenom = 1_000
+	KiB SizeDenom = 1 << 10
+	MB  SizeDenom = 1_000_000
+	MiB SizeDenom = 1 << 20
+	GB  SizeDenom = 1_000_000_000
+	GiB SizeDenom = 1 << 30
+	TB  SizeDenom = 1_000_000_000_000
+	TiB SizeDenom = 1 << 40
+	PB  SizeDenom = 1_000_000_000_000_000
+	PiB SizeDenom = 1 << 50
+	EB  SizeDenom = 1_000_000_000_000_000_000
+	EiB SizeDenom = 1 << 60
+	XB  SizeDenom = (1 << 64) - 1
+	XiB SizeDenom = (1 << 64) - 2
 )
 
 type Sort int
