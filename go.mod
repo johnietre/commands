@@ -5,7 +5,7 @@ go 1.18
 require (
 	github.com/BurntSushi/toml v1.3.2
 	github.com/google/uuid v1.3.0
-	github.com/johnietre/utils/go v0.0.0-20240712084910-4fb386379ba6
+	github.com/johnietre/utils/go v0.0.0-20251116091153-a6414c2943c4
 	github.com/mattn/go-sqlite3 v1.14.9
 	github.com/spf13/cobra v1.8.0
 	golang.org/x/crypto v0.7.0

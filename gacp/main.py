@@ -9,6 +9,8 @@ def main():
         print("Run `git add [PATHS]`, `git commit -m <COMMIT_MESSAGE>`, and `git push` all at once")
         print("NOTE: The message is passed to git commit surrounded by double quotes")
         exit(1)
+    conf = input("Did you pull (git pull)? [Y/n] ").lower()
+    if conf not in ("y", "yes"): return
     conf = input("Did you format code? [Y/n] ").lower()
     if conf not in ("y", "yes"): return
 

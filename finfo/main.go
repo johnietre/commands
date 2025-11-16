@@ -33,9 +33,9 @@ var (
 	matchFunc = func(string) bool { return true }
 	size      uint64
 	totalSize uint64
-	jobChan   chan Job
+	jobChan   *utils.UChan[Job]
 	wg        sync.WaitGroup
-	// Should be added to when sending to jobChan and `Done`ed only ni doJob
+	// Should be added to when sending to jobChan and `Done`ed only in doJob
 	jobsWg sync.WaitGroup
 )
 
@@ -82,8 +82,13 @@ func main() {
 	flags.Bool(
 		"dirs", false, "Match only directories with regular expressions",
 	)
-	flags.VarP(&sort, "sort", "S", "Sort output")
-	flags.Bool("rev", false, "Reverse the sort (no effect if unsorted)")
+	flags.VarP(
+		&sort,
+		"sort",
+		"S",
+		`Sort output (name/size/time/none); prepend with "-" to reverse sort`,
+	)
+	//flags.Bool("rev", false, "Reverse the sort (no effect if unsorted)")
 	flags.VarP(&numWorkers, "num-workers", "N", `Number of workers to spawn; "cpus" to spawn for each CPU core, negative to use original method`)
 	flags.Bool("stdin", false, "Read from stdin")
 	cmd.MarkFlagsMutuallyExclusive("files", "dirs")
@@ -100,7 +105,7 @@ func run(cmd *cobra.Command, args []string) {
 	filesOnly := utils.Must(flags.GetBool("files"))
 	dirsOnly := utils.Must(flags.GetBool("dirs"))
 	total := utils.Must(flags.GetBool("total"))
-	reverse := utils.Must(flags.GetBool("rev"))
+	//reverse := utils.Must(flags.GetBool("rev"))
 	stdin := utils.Must(flags.GetBool("stdin"))
 
 	if regexStr != "" {
@@ -153,6 +158,7 @@ func run(cmd *cobra.Command, args []string) {
 		log.Fatal("must provide path")
 	}
 
+	sort, reverse := sort.ToBaseRev()
 	var outputs []*Output
 
 	if numWorkers >= 0 {
@@ -160,11 +166,20 @@ func run(cmd *cobra.Command, args []string) {
 		if chanLen == 0 {
 			chanLen = 100
 		}
-		jobChan = make(chan Job, chanLen)
+		jobChan = utils.NewUChan[Job](int(chanLen + 1000))
+		var workersWg sync.WaitGroup
 
-		go runJobs()
+		workersWg.Add(1)
+		go func() {
+			runJobs()
+			workersWg.Done()
+		}()
 		for i := NumWorkers(1); i < numWorkers; i++ {
-			go runJobs()
+			workersWg.Add(1)
+			go func() {
+				runJobs()
+				workersWg.Done()
+			}()
 		}
 
 		var jobs []Job
@@ -176,12 +191,13 @@ func run(cmd *cobra.Command, args []string) {
 				output:  &Output{name: path},
 			}
 			jobsWg.Add(1)
-			jobChan <- job
+			jobChan.Send(job)
 			jobs = append(jobs, job)
 		}
 
 		jobsWg.Wait()
-		close(jobChan)
+		jobChan.Close()
+		workersWg.Wait()
 
 		for _, job := range jobs {
 			job.output.size = job.size.Load()
@@ -262,8 +278,24 @@ type Job struct {
 	output  *Output
 }
 
+func (j Job) withPath(path string) Job {
+	return Job{
+		path:    path,
+		size:    j.size,
+		started: j.started,
+		output:  j.output,
+	}
+}
+
 func runJobs() {
-	for job := range jobChan {
+	for {
+		job, ok := jobChan.Recv()
+		if !ok {
+			break
+		}
+		if job.path == "" {
+			continue
+		}
 		if numWorkers == 0 {
 			go func(job Job) {
 				doJob(job)
@@ -275,15 +307,21 @@ func runJobs() {
 }
 
 func doJob(job Job) {
-	defer jobsWg.Done()
+	//defer jobsWg.Done()
 	if job.started.Swap(true) {
 		doJobDir(job)
+		jobsWg.Done()
 		return
 	}
 	info, err := os.Stat(job.path)
 	if err != nil {
 		//log.Fatalf("error getting info: %v", err)
 		log.Printf("error getting info: %v", err)
+		jobsWg.Done()
+		return
+	}
+	if info.Mode()&os.ModeSymlink != 0 {
+		jobsWg.Done()
 		return
 	}
 	job.output.info = info
@@ -292,6 +330,7 @@ func doJob(job Job) {
 	} else {
 		doJobDir(job)
 	}
+	jobsWg.Done()
 }
 
 func doJobDir(job Job) {
@@ -308,6 +347,8 @@ func doJobDir(job Job) {
 				filepath.Join(job.path, ent.Name()), err,
 			)
 			continue
+		} else if info.Mode()&os.ModeSymlink != 0 {
+			continue
 		}
 		if !info.IsDir() {
 			if matchFunc(ent.Name()) {
@@ -321,14 +362,20 @@ func doJobDir(job Job) {
 			}
 			if matchFunc(name) {
 				jobsWg.Add(1)
-				jobChan <- Job{
-					path: filepath.Join(job.path, ent.Name()),
-					size: job.size,
-				}
+				jobChan.Send(job.withPath(filepath.Join(job.path, ent.Name())))
+				/*
+								jobChan <- Job{
+				          started: NewABool(true),
+									path: filepath.Join(job.path, ent.Name()),
+									size: job.size,
+								}
+				*/
 			}
 		}
 	}
 }
+
+var Count = int32(0)
 
 func walkDir(path string) {
 	defer wg.Done()
@@ -615,15 +662,19 @@ const (
 type Sort int
 
 func (s *Sort) Set(str string) error {
+	rev := Sort(1)
+	if len(str) != 0 && str[0] == '-' {
+		str, rev = str[1:], -1
+	}
 	switch strings.ToLower(str) {
 	case "", "none":
-		*s = SortNone
+		*s = rev * SortNone
 	case "name":
-		*s = SortName
+		*s = rev * SortName
 	case "size":
-		*s = SortSize
+		*s = rev * SortSize
 	case "time":
-		*s = SortTime
+		*s = rev * SortTime
 	default:
 		return fmt.Errorf("invalid sort")
 	}
@@ -631,21 +682,33 @@ func (s *Sort) Set(str string) error {
 }
 
 func (s Sort) String() string {
+	s, rev := s.ToBaseRev()
+	prep := ""
+	if rev {
+		prep = "-"
+	}
 	switch s {
 	case SortNone:
-		return "none"
+		return prep + "none"
 	case SortName:
-		return "name"
+		return prep + "name"
 	case SortSize:
-		return "size"
+		return prep + "size"
 	case SortTime:
-		return "time"
+		return prep + "time"
 	}
 	return "???"
 }
 
 func (s Sort) Type() string {
 	return "sort"
+}
+
+func (s Sort) ToBaseRev() (Sort, bool) {
+	if s >= 0 {
+		return s, false
+	}
+	return -s, true
 }
 
 const (

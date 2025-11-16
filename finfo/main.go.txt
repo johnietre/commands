@@ -1,290 +1,372 @@
+// TODO: Multiple sort (e.g., by size, then name)
+// TODO: exit code (1 on any error?)
+// TODO: panicking (deadlocking) when doing multiple files/dirs recursively (on windows)
 package main
 
 import (
-	"flag"
+	"bufio"
 	"fmt"
+	"io"
 	"io/fs"
 	"log"
 	"os"
 	"path/filepath"
 	"regexp"
+	"runtime"
+	sortpkg "sort"
 	"strconv"
 	"strings"
 	"sync"
 	"sync/atomic"
 
-  "github.com/spf13/cobra"
+	"github.com/johnietre/utils/go"
+	"github.com/spf13/cobra"
 )
 
-type SizeDenom uint64
-
-func (sd *SizeDenom) Set(s string) error {
-	switch strings.ToLower(s) {
-	case "b":
-		*sd = B
-	case "kb":
-		*sd = KB
-	case "kib":
-		*sd = KiB
-	case "mb":
-		*sd = MB
-	case "mib":
-		*sd = MiB
-	case "gb":
-		*sd = GB
-	case "gib":
-		*sd = GiB
-	default:
-		n, err := strconv.ParseUint(s, 0, 64)
-		if err != nil {
-			return err
-		}
-		*sd = SizeDenom(n)
-	}
-	return nil
+type MyWg struct {
+  sync.WaitGroup
+  count int32
 }
 
-func (sd SizeDenom) String() string {
-	switch sd {
-	case B:
-		return "B"
-	case KB:
-		return "KB"
-	case KiB:
-		return "KiB"
-	case MB:
-		return "MB"
-	case MiB:
-		return "MiB"
-	case GB:
-		return "GB"
-	case GiB:
-		return "GiB"
-	}
-	return fmt.Sprintf("%d B", sd)
+func (wg *MyWg) Add(to int) {
+  wg.WaitGroup.Add(to)
+  //fmt.Println("ADD:", atomic.AddInt32(&wg.count, int32(to)))
 }
 
-const (
-	B   SizeDenom = 1
-	KB            = 1_000
-	KiB           = 1 << 10
-	MB            = 1_000_000
-	MiB           = 1 << 20
-	GB            = 1_000_000_000
-	GiB           = 1 << 30
-)
+func (wg *MyWg) Done() {
+  wg.WaitGroup.Done()
+  //fmt.Println("DONE:", atomic.AddInt32(&wg.count, -1))
+}
 
 var (
-	sizeDenom = B
-	recursive = false
-	prec      = -1
+	//sizeDenom             = B
+	sizeDenom             = XB
+	sort                  = SortNone
+	recursive             = false
+	prec                  = -1
+	numWorkers NumWorkers = 1
 
 	matchFunc = func(string) bool { return true }
 	size      uint64
 	totalSize uint64
+	jobChan   *utils.UChan[Job]
 	wg        sync.WaitGroup
+	// Should be added to when sending to jobChan and `Done`ed only in doJob
+	//jobsWg sync.WaitGroup
+	jobsWg MyWg
 )
 
 func main() {
 	log.SetFlags(0)
 
-  cmd := &cobra.Command{
-    Use: "finfo",
-    Short: "A program to get a bit of file info (like size and last mod)",
-  }
-  flags := cmd.Flags()
-  flags.BoolVarP(
-    &recursive, "recursive", "r", false,
-    "If directory, get size of all subdirectories (recursive)",
-  )
-  flags.IntVarP(
-    &prec, "precision", "p", -1,
-    "Precision of output decimals (<0 for no limit)",
-  )
-  flags.BoolP(
-    "total", "t", false,
-    "Calculate the total size of all args",
-  )
-  flags.StringP(
-    "regex", "x", "",
-    "Regex expression to match paths against when calculate size",
-  )
-  flags.Bool(
-    "excl", false,
-    "Exclude regular expression matches",
-  )
-  flags.Bool(
-    "files", false, "Match only files with regular expressions",
-  )
-  flags.Bool(
-    "dirs", false, "Match only directories with regular expressions",
-  )
-
-	flag.Var(
-		&sizeDenom, "size",
+	cmd := &cobra.Command{
+		Use:   "finfo",
+		Short: "A program to get a bit of file info (like size and last mod)",
+		Run:   run,
+	}
+	flags := cmd.Flags()
+	flags.VarP(
+		&sizeDenom, "size", "s",
 		"Size denomination (B/KB/KiB/MB/MiB/GB/GiB/Custom)",
 	)
-	flag.BoolVar(
-		&recursive, "r", false,
+	flags.StringArray(
+		"path", nil,
+		"Explicitly specify path (useful for passing a path that looks like a flag; can be passed multiple times)",
+	)
+	flags.BoolVarP(
+		&recursive, "recursive", "r", false,
 		"If directory, get size of all subdirectories (recursive)",
 	)
-	flag.IntVar(
-		&prec, "p", -1,
-		"Precision of output decimals (-1 for no limit)",
+	flags.IntVarP(
+		&prec, "precision", "p", -1,
+		"Precision of output decimals (<0 for no limit)",
 	)
-	total := flag.Bool("total", false, "Calculate the total size of all args")
-	// Used only for when looping through the arguments since it can be passed
-	// multiple times
-	flag.String(
-		"path", "", "Explicitly specify path (can be passed multiple times)",
+	flags.BoolP(
+		"total", "t", false,
+		"Calculate the total size of all args",
 	)
-	regexStr := flag.String(
-		"regex", "",
-		"Regex expression to match paths against when calculating size",
+	flags.StringP(
+		"regex", "x", "",
+		"Regex expression to match paths against when calculate size",
 	)
-	excludeMatch := flag.Bool(
-		"excl", false, "Exclude regular expression matches",
+	flags.Bool(
+		"excl", false,
+		"Exclude regular expression matches",
 	)
-	filesOnly := flag.Bool(
-		"files", false,
-		"Match only files with regular expressions; shouldn't pass --dirs with this flag",
+	flags.Bool(
+		"files", false, "Match only files with regular expressions",
 	)
-	dirsOnly := flag.Bool(
-		"dirs", false,
-		"Match only directories with regular expressions; shouldn't pass --files with this flag",
+	flags.Bool(
+		"dirs", false, "Match only directories with regular expressions",
 	)
-	boolFlags := map[string]bool{
-		"r":     true,
-		"total": true,
-		"excl":  true,
-		"files": true,
-		"dirs":  true,
-	}
+	flags.VarP(
+    &sort,
+    "sort",
+    "S",
+    `Sort output (name/size/time/none); prepend with "-" to reverse sort`,
+  )
+	//flags.Bool("rev", false, "Reverse the sort (no effect if unsorted)")
+	flags.VarP(&numWorkers, "num-workers", "N", `Number of workers to spawn; "cpus" to spawn for each CPU core, negative to use original method`)
+	flags.Bool("stdin", false, "Read from stdin")
+	cmd.MarkFlagsMutuallyExclusive("files", "dirs")
 
-	// Print help
-	if len(os.Args) == 2 && (os.Args[1] == "-h" || os.Args[1] == "--help") {
-		flag.Parse()
+	if err := cmd.Execute(); err != nil {
+		log.Fatal(err)
 	}
-	var args, paths []string
-	// Keeps track of whether the previous arg was a flag with a value yet to be
-	// passed
-	prevFlag := false
-	for i, l := 1, len(os.Args); i < l; i++ {
-		arg := os.Args[i]
-		if prevFlag {
-			prevFlag = false
-			args = append(args, arg)
-			continue
-		} else if arg[0] != '-' {
-			paths = append(paths, arg)
-			continue
-		}
-		// Get the flag name
-		name, value := "", ""
-		l := len(arg)
-		if l > 1 && arg[1] == '-' {
-			name = arg[2:]
-		} else {
-			name = arg[1:]
-		}
-		// Split value from flag
-		if index := strings.IndexByte(name, '='); index != -1 {
-			name, value = name[:index], name[index+1:]
-		} else {
-			prevFlag = true
-		}
-		// Check if it is the path flag
-		if name == "path" {
-			if value != "" {
-				// Add the value if it was defined with the flag
-				paths = append(paths, value)
-			} else if prevFlag {
-				// Get the next arg (the value) if it exists
-				if i != l-1 {
-					i++
-					paths = append(paths, os.Args[i+1])
-				} else {
-					// If this is the last flag passed but no value is passed afterwards
-					// (checked with `i != l - 1`), then throw an error. This can be done
-					// by just including it in the arguments passed to Parse() since it
-					// will throw an error when a flag is passed without a defined value.
-					// We can break since we know it's the last arg
-					args = append(args, arg)
-					break
-				}
-			}
-			prevFlag = false
-			continue
-		}
-		// See if the flag is defined
-		if flag.Lookup(name) != nil {
-			args = append(args, arg)
-			// No value will be defined in next arg if this is a boolean flag
-			prevFlag = !boolFlags[name] || value == ""
-		} else {
-			paths = append(paths, arg)
-			prevFlag = false
-		}
-	}
+}
 
-	flag.CommandLine.Parse(args)
-	if len(paths) == 0 {
-		log.Fatal("must provide path")
-	}
+func run(cmd *cobra.Command, args []string) {
+	flags := cmd.Flags()
+	regexStr := utils.Must(flags.GetString("regex"))
+	excludeMatch := utils.Must(flags.GetBool("excl"))
+	filesOnly := utils.Must(flags.GetBool("files"))
+	dirsOnly := utils.Must(flags.GetBool("dirs"))
+	total := utils.Must(flags.GetBool("total"))
+	//reverse := utils.Must(flags.GetBool("rev"))
+	stdin := utils.Must(flags.GetBool("stdin"))
 
-	if *regexStr != "" {
-		regex, err := regexp.Compile(*regexStr)
+	if regexStr != "" {
+		regex, err := regexp.Compile(regexStr)
 		if err != nil {
 			log.Fatal("invalid regex: ", err)
 		}
 		matchFunc = regex.MatchString
 	}
-	if *excludeMatch {
+	if excludeMatch {
 		f := matchFunc
 		matchFunc = func(s string) bool { return !f(s) }
 	}
-	if *filesOnly {
+	if filesOnly {
+		f := matchFunc
+		matchFunc = func(s string) bool {
+			l := len(s)
+			return l == 0 || s[l-1] != '/' || f(s)
+		}
+	}
+	if dirsOnly {
 		f := matchFunc
 		matchFunc = func(s string) bool {
 			l := len(s)
 			return l == 0 || s[l-1] == '/' || f(s)
 		}
 	}
-	if *dirsOnly {
-		f := matchFunc
-		matchFunc = func(s string) bool {
-			l := len(s)
-			println(s, l == 0 || s[l-1] != '/' || f(s))
-			return l == 0 || s[l-1] != '/' || f(s)
+
+	paths := append(args, utils.Must(flags.GetStringArray("path"))...)
+
+	if stdin {
+		r := bufio.NewReader(os.Stdin)
+		for {
+			line, err := r.ReadString('\n')
+			if err != nil {
+				if err == io.EOF {
+					break
+				}
+				log.Fatal("error reading from stdin: ", err)
+			}
+			l := len(line)
+			if l == 0 {
+				continue
+			}
+			paths = append(paths, line[:l-1])
 		}
 	}
 
-	for i, path := range paths {
+	if len(paths) == 0 {
+		log.Fatal("must provide path")
+	}
+
+  sort, reverse := sort.ToBaseRev()
+	var outputs []*Output
+
+	if numWorkers >= 0 {
+		chanLen := numWorkers
+		if chanLen == 0 {
+			chanLen = 100
+		}
+		jobChan = utils.NewUChan[Job](int(chanLen))
+
+		go runJobs()
+		for i := NumWorkers(1); i < numWorkers; i++ {
+			go runJobs()
+		}
+
+		var jobs []Job
+		for _, path := range paths {
+			job := Job{
+				path:    path,
+				size:    NewAU64(0),
+				started: NewABool(false),
+				output:  &Output{name: path},
+			}
+			jobsWg.Add(1)
+			jobChan.Send(job)
+			jobs = append(jobs, job)
+		}
+
+		jobsWg.Wait()
+    jobChan.Close()
+
+		for _, job := range jobs {
+			job.output.size = job.size.Load()
+			totalSize += job.output.size
+			outputs = append(outputs, job.output)
+		}
+	} else {
+		for i, path := range paths {
+			if sort == SortNone && i != 0 {
+				fmt.Println(strings.Repeat("=", 40))
+			}
+			info, err := os.Stat(path)
+			if err != nil {
+				//log.Fatalf("error getting info: %v", err)
+				log.Printf("error getting info: %v", err)
+				continue
+			}
+			if !info.IsDir() {
+				size = uint64(info.Size())
+			} else {
+				wg.Add(1)
+				walkDir(path)
+				wg.Wait()
+			}
+			if sort == SortNone {
+				printInfo(path, info, size)
+			} else {
+				outputs = append(outputs, &Output{name: path, size: size, info: info})
+			}
+			if total {
+				totalSize += size
+			}
+			size = 0
+		}
+	}
+
+	if sort != SortNone {
+		sortpkg.Slice(outputs, func(i, j int) bool {
+			var res bool
+			switch sort {
+			case SortName:
+				res = outputs[i].name < outputs[j].name
+			case SortSize:
+				res = outputs[i].size < outputs[j].size
+			case SortTime:
+				res = outputs[i].info.ModTime().Before(outputs[j].info.ModTime())
+			default:
+				res = outputs[i].name < outputs[j].name
+			}
+			return res != reverse
+		})
+	}
+	for i, out := range outputs {
+		if out.info == nil {
+			continue
+		}
 		if i != 0 {
 			fmt.Println(strings.Repeat("=", 40))
 		}
-		info, err := os.Stat(path)
+		printInfo(out.name, out.info, out.size)
+	}
+	if total {
+		fmt.Println(strings.Repeat("=", 40))
+		fmt.Println("Total Size:", makeSizeStr(totalSize))
+	}
+}
+
+type Output struct {
+	name string
+	size uint64
+	info os.FileInfo
+}
+
+type Job struct {
+	path    string
+	size    *AU64
+	started *ABool
+	output  *Output
+}
+
+func (j Job) withPath(path string) Job {
+  return Job{
+    path: path,
+    size: j.size,
+    started: j.started,
+    output: j.output,
+  }
+}
+
+func runJobs() {
+  for {
+    job, ok := jobChan.Recv()
+    if !ok {
+      break
+    }
+		if numWorkers == 0 {
+			go func(job Job) {
+				doJob(job)
+			}(job)
+			continue
+		}
+		doJob(job)
+	}
+}
+
+func doJob(job Job) {
+	defer jobsWg.Done()
+	if job.started.Swap(true) {
+		doJobDir(job)
+		return
+	}
+	info, err := os.Stat(job.path)
+	if err != nil {
+		//log.Fatalf("error getting info: %v", err)
+		log.Printf("error getting info: %v", err)
+		return
+	}
+	job.output.info = info
+	if !info.IsDir() {
+		job.size.Add(uint64(info.Size()))
+	} else {
+		doJobDir(job)
+	}
+}
+
+func doJobDir(job Job) {
+	ents, err := os.ReadDir(job.path)
+	if err != nil {
+		log.Printf("error opening %s: %v", job.path, err)
+		return
+	}
+	for _, ent := range ents {
+		info, err := ent.Info()
 		if err != nil {
-			//log.Fatalf("error getting info: %v", err)
-			log.Printf("error getting info: %v", err)
+			log.Printf(
+				"error getting info for %s: %v",
+				filepath.Join(job.path, ent.Name()), err,
+			)
 			continue
 		}
 		if !info.IsDir() {
-			size = uint64(info.Size())
-		} else {
-			wg.Add(1)
-			walkDir(path)
-			wg.Wait()
+			if matchFunc(ent.Name()) {
+				job.size.Add(uint64(info.Size()))
+			}
+			continue
+		} else if recursive {
+			name := ent.Name()
+			if l := len(name); l == 0 || name[l-1] != '/' {
+				name += "/"
+			}
+			if matchFunc(name) {
+				jobsWg.Add(1)
+        jobChan.Send(job.withPath(filepath.Join(job.path, ent.Name())))
+        /*
+				jobChan <- Job{
+          started: NewABool(true),
+					path: filepath.Join(job.path, ent.Name()),
+					size: job.size,
+				}
+        */
+			}
 		}
-		printInfo(info, size)
-		if *total {
-			totalSize += size
-		}
-		size = 0
-	}
-	if *total {
-		fmt.Println(strings.Repeat("=", 40))
-		fmt.Println("Total Size:", makeSizeStr(totalSize))
 	}
 }
 
@@ -319,58 +401,134 @@ func walkDir(path string) {
 	}
 }
 
-func printInfo(info fs.FileInfo, size uint64) {
+func printInfo(path string, info fs.FileInfo, size uint64) {
 	sizeStr := makeSizeStr(size)
 	fmt.Printf(
 		"%s\nSize: %s\nLast Mod: %s\n",
-		info.Name(), sizeStr, info.ModTime().Format("15:04 Jan 02, 2006"),
+		//info.Name(),
+		path,
+		sizeStr,
+		info.ModTime().Format("15:04 Jan 02, 2006"),
 	)
 }
 
-func makeSizeStr(size uint64) (sizeStr string) {
-	switch sizeDenom {
+func makeSizeStr(size uint64) string {
+	return makeSizeStrFor(size, sizeDenom)
+}
+
+func makeSizeStrFor(usize uint64, denom SizeDenom) (sizeStr string) {
+	ssize := SizeDenom(usize)
+	switch denom {
 	case B:
-		sizeStr = commas(size) + " B"
+		sizeStr = commas(uint64(ssize)) + " B"
 	case KB:
-		sizeStr = commas(size / KB)
-		if rem := size % KB; rem != 0 {
+		sizeStr = commas(uint64(ssize / KB))
+		if rem := ssize % KB; rem != 0 {
 			sizeStr += strconv.FormatFloat(float64(rem)/float64(KB), 'f', prec, 64)[1:]
 		}
 		sizeStr += " KB"
 	case KiB:
-		sizeStr = commas(size / KiB)
-		if rem := size % KiB; rem != 0 {
+		sizeStr = commas(uint64(ssize / KiB))
+		if rem := ssize % KiB; rem != 0 {
 			sizeStr += strconv.FormatFloat(float64(rem)/float64(KiB), 'f', prec, 64)[1:]
 		}
 		sizeStr += " KiB"
 	case MB:
-		sizeStr = commas(size / MB)
-		if rem := size % MB; rem != 0 {
+		sizeStr = commas(uint64(ssize / MB))
+		if rem := ssize % MB; rem != 0 {
 			sizeStr += strconv.FormatFloat(float64(rem)/float64(MB), 'f', prec, 64)[1:]
 		}
 		sizeStr += " MB"
 	case MiB:
-		sizeStr = commas(size / MiB)
-		if rem := size % MiB; rem != 0 {
+		sizeStr = commas(uint64(ssize / MiB))
+		if rem := ssize % MiB; rem != 0 {
 			sizeStr += strconv.FormatFloat(float64(rem)/float64(MiB), 'f', prec, 64)[1:]
 		}
 		sizeStr += " MiB"
 	case GB:
-		sizeStr = commas(size / GB)
-		if rem := size % GB; rem != 0 {
+		sizeStr = commas(uint64(ssize / GB))
+		if rem := ssize % GB; rem != 0 {
 			sizeStr += strconv.FormatFloat(float64(rem)/float64(GB), 'f', prec, 64)[1:]
 		}
 		sizeStr += " GB"
 	case GiB:
-		sizeStr = commas(size / GiB)
-		if rem := size % GiB; rem != 0 {
+		sizeStr = commas(uint64(ssize / GiB))
+		if rem := ssize % GiB; rem != 0 {
 			sizeStr += strconv.FormatFloat(float64(rem)/float64(GiB), 'f', prec, 64)[1:]
 		}
 		sizeStr += " GiB"
+	case TB:
+		sizeStr = commas(uint64(ssize / TB))
+		if rem := ssize % TB; rem != 0 {
+			sizeStr += strconv.FormatFloat(float64(rem)/float64(TB), 'f', prec, 64)[1:]
+		}
+		sizeStr += " TB"
+	case TiB:
+		sizeStr = commas(uint64(ssize / TiB))
+		if rem := ssize % TiB; rem != 0 {
+			sizeStr += strconv.FormatFloat(float64(rem)/float64(TiB), 'f', prec, 64)[1:]
+		}
+		sizeStr += " TiB"
+	case PB:
+		sizeStr = commas(uint64(ssize / PB))
+		if rem := ssize % PB; rem != 0 {
+			sizeStr += strconv.FormatFloat(float64(rem)/float64(PB), 'f', prec, 64)[1:]
+		}
+		sizeStr += " PB"
+	case PiB:
+		sizeStr = commas(uint64(ssize / PiB))
+		if rem := ssize % PiB; rem != 0 {
+			sizeStr += strconv.FormatFloat(float64(rem)/float64(PiB), 'f', prec, 64)[1:]
+		}
+		sizeStr += " PiB"
+	case EB:
+		sizeStr = commas(uint64(ssize / EB))
+		if rem := ssize % EB; rem != 0 {
+			sizeStr += strconv.FormatFloat(float64(rem)/float64(EB), 'f', prec, 64)[1:]
+		}
+		sizeStr += " EB"
+	case EiB:
+		sizeStr = commas(uint64(ssize / EiB))
+		if rem := ssize % EiB; rem != 0 {
+			sizeStr += strconv.FormatFloat(float64(rem)/float64(EiB), 'f', prec, 64)[1:]
+		}
+		sizeStr += " EiB"
+	case XB:
+		if ssize >= EB {
+			return makeSizeStrFor(usize, EB)
+		} else if ssize >= PB {
+			return makeSizeStrFor(usize, PB)
+		} else if ssize >= TB {
+			return makeSizeStrFor(usize, TB)
+		} else if ssize >= GB {
+			return makeSizeStrFor(usize, GB)
+		} else if ssize >= MB {
+			return makeSizeStrFor(usize, MB)
+		} else if ssize >= KB {
+			return makeSizeStrFor(usize, KB)
+		} else {
+			return makeSizeStrFor(usize, B)
+		}
+	case XiB:
+		if ssize >= EiB {
+			return makeSizeStrFor(usize, EiB)
+		} else if ssize >= PiB {
+			return makeSizeStrFor(usize, PiB)
+		} else if ssize >= TiB {
+			return makeSizeStrFor(usize, TiB)
+		} else if ssize >= GiB {
+			return makeSizeStrFor(usize, GiB)
+		} else if ssize >= MiB {
+			return makeSizeStrFor(usize, MiB)
+		} else if ssize >= KiB {
+			return makeSizeStrFor(usize, KiB)
+		} else {
+			return makeSizeStrFor(usize, B)
+		}
 	default:
-		sd := uint64(sizeDenom)
-		sizeStr = commas(size / sd)
-		if rem := size % sd; rem != 0 {
+		sd := sizeDenom
+		sizeStr = commas(uint64(ssize / sd))
+		if rem := ssize % sd; rem != 0 {
 			sizeStr += strconv.FormatFloat(float64(rem)/float64(sd), 'f', prec, 64)[1:]
 		}
 		sizeStr += fmt.Sprintf(" /%d B", sd)
@@ -390,4 +548,236 @@ func commas(u uint64) string {
 		str = string(numStr[i]) + str
 	}
 	return str
+}
+
+type SizeDenom uint64
+
+func (sd *SizeDenom) Set(s string) error {
+	switch strings.ToLower(s) {
+	case "b":
+		*sd = B
+	case "kb":
+		*sd = KB
+	case "kib":
+		*sd = KiB
+	case "mb":
+		*sd = MB
+	case "mib":
+		*sd = MiB
+	case "gb":
+		*sd = GB
+	case "gib":
+		*sd = GiB
+	case "tb":
+		*sd = TB
+	case "tib":
+		*sd = TiB
+	case "pb":
+		*sd = PB
+	case "pib":
+		*sd = PiB
+	case "eb":
+		*sd = EB
+	case "eib":
+		*sd = EiB
+	case "x", "xb":
+		*sd = XB
+	case "xib":
+		*sd = XiB
+	default:
+		n, err := strconv.ParseUint(s, 0, 64)
+		if err != nil {
+			return err
+		}
+		*sd = SizeDenom(n)
+	}
+	return nil
+}
+
+func (sd SizeDenom) String() string {
+	switch sd {
+	case B:
+		return "B"
+	case KB:
+		return "KB"
+	case KiB:
+		return "KiB"
+	case MB:
+		return "MB"
+	case MiB:
+		return "MiB"
+	case GB:
+		return "GB"
+	case GiB:
+		return "GiB"
+	case TB:
+		return "TB"
+	case TiB:
+		return "TiB"
+	case PB:
+		return "PB"
+	case PiB:
+		return "PiB"
+	case EB:
+		return "EB"
+	case EiB:
+		return "EiB"
+	case XB:
+		return "XB"
+	case XiB:
+		return "XiB"
+	}
+	return fmt.Sprintf("%d B", sd)
+}
+
+func (sd SizeDenom) Type() string {
+	return "size"
+}
+
+const (
+	B   SizeDenom = 1
+	KB  SizeDenom = 1_000
+	KiB SizeDenom = 1 << 10
+	MB  SizeDenom = 1_000_000
+	MiB SizeDenom = 1 << 20
+	GB  SizeDenom = 1_000_000_000
+	GiB SizeDenom = 1 << 30
+	TB  SizeDenom = 1_000_000_000_000
+	TiB SizeDenom = 1 << 40
+	PB  SizeDenom = 1_000_000_000_000_000
+	PiB SizeDenom = 1 << 50
+	EB  SizeDenom = 1_000_000_000_000_000_000
+	EiB SizeDenom = 1 << 60
+	XB  SizeDenom = (1 << 64) - 1
+	XiB SizeDenom = (1 << 64) - 2
+)
+
+type Sort int
+
+func (s *Sort) Set(str string) error {
+  rev := Sort(1)
+  if len(str) != 0 && str[0] == '-' {
+    str, rev = str[1:], -1
+  }
+	switch strings.ToLower(str) {
+	case "", "none":
+		*s = rev * SortNone
+	case "name":
+		*s = rev * SortName
+	case "size":
+		*s = rev * SortSize
+	case "time":
+		*s = rev * SortTime
+	default:
+		return fmt.Errorf("invalid sort")
+	}
+	return nil
+}
+
+func (s Sort) String() string {
+  s, rev := s.ToBaseRev()
+  prep := ""
+  if rev {
+    prep = "-"
+  }
+	switch s {
+	case SortNone:
+		return prep + "none"
+	case SortName:
+		return prep + "name"
+	case SortSize:
+		return prep + "size"
+	case SortTime:
+		return prep + "time"
+	}
+	return "???"
+}
+
+func (s Sort) Type() string {
+	return "sort"
+}
+
+func (s Sort) ToBaseRev() (Sort, bool) {
+  if s >= 0 {
+    return s, false
+  }
+  return -s, true
+}
+
+const (
+	SortNone Sort = iota
+	SortName
+	SortSize
+	SortTime
+)
+
+type NumWorkers int
+
+// NOTE: settings negative uses non-worker way
+func (nw *NumWorkers) Set(s string) error {
+	if s == "cpus" {
+		*nw = NumWorkers(runtime.NumCPU())
+		return nil
+	}
+	u, err := strconv.Atoi(s)
+	if err == nil {
+		*nw = NumWorkers(u)
+	}
+	return err
+}
+
+func (nw NumWorkers) String() string {
+	return fmt.Sprintf("%d", nw)
+}
+
+func (NumWorkers) Type() string {
+	return "num_cpu"
+}
+
+type AU64 struct {
+	val uint64
+}
+
+func NewAU64(val uint64) *AU64 {
+	return &AU64{val: val}
+}
+
+func (au *AU64) Add(a uint64) uint64 {
+	return atomic.AddUint64(&au.val, a)
+}
+
+func (au *AU64) Load() uint64 {
+	return atomic.LoadUint64(&au.val)
+}
+
+type ABool struct {
+	val uint32
+}
+
+func NewABool(b bool) *ABool {
+	val := uint32(0)
+	if b {
+		val = 1
+	}
+	return &ABool{val: val}
+}
+
+func (au *ABool) Store(b bool) {
+	if b {
+		atomic.StoreUint32(&au.val, 1)
+	} else {
+		atomic.StoreUint32(&au.val, 0)
+	}
+}
+
+func (au *ABool) Swap(b bool) bool {
+	if b {
+		return atomic.SwapUint32(&au.val, 1) != 0
+	} else {
+		return atomic.SwapUint32(&au.val, 0) != 0
+	}
+}
+
+func (au *ABool) Load() bool {
+	return atomic.LoadUint32(&au.val) != 0
 }
