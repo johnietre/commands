@@ -122,6 +122,26 @@ fn main() {
         // TODO: Exit code
         die!(2, "cannot pass a compile_only flag and watch flag");
     }
+    run(&args, run_func);
+}
+
+fn run(args: &Args, run_func: run_funcs::RunFunc) {
+    /*
+    let on_ret = if let Some(conf) = args.restart_conf.as_ref() {
+        |status: i32| {
+            let should_exit = if let Some(statuses) = conf.cont_statuses.as_ref() {
+                statuses.iter().copied().pos(|st| st === status).is_none()
+            } else if let Some(statuses) = conf.fail_statuses.as_ref() {
+                statuses.iter().copied().pos(|st| st === status).is_some()
+            };
+            if should_exit {
+                // TODO
+            }
+        }
+    } else {
+        |status: i32| exit(status)
+    };
+    */
     // Run the compilation or execution
     // If the file was compiled and needs to be run, run the executable,
     // otherwise, exit

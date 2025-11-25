@@ -1,7 +1,7 @@
 use crate::args::*;
 use crate::die;
 use crate::file_type::*;
-use std::fs::remove_file;
+use std::fs::{remove_file, File};
 use std::process::{Child, Command};
 use std::time::Instant;
 
@@ -290,7 +290,20 @@ fn new_exec_cmd(args: &Args) -> Command {
         die!(2, "output name not set")
     };
     let mut cmd = Command::new(name);
-    cmd.args(&args.exec_args);
+    cmd
+        .args(&args.exec_args)
+        .stdout(
+            stdio_from_name(args.stdout_output(false).as_ref(), false)
+                .unwrap_or_else(|e| die!(2, "error setting up stdout pipe: {}", e)),
+        )
+        .stderr(
+            stdio_from_name(args.stderr_output(false).as_ref(), false)
+                .unwrap_or_else(|e| die!(2, "error setting up stderr pipe: {}", e)),
+        )
+        .stdin(
+            stdio_from_name(args.stdin_output(false).as_ref(), true)
+                .unwrap_or_else(|e| die!(2, "error setting up stdin pipe: {}", e)),
+        )
     cmd
 }
 
@@ -358,7 +371,19 @@ fn new_compile_cmd<S: ToString>(compiler: S, args: &Args) -> Command {
                 .unwrap_or_else(|| die!(2, "output name not set")),
         )
         .args(&args.file_names)
-        .args(&args.comp_args);
+        .args(&args.comp_args)
+        .stdout(
+            stdio_from_name(args.stdout_output(true).as_ref(), false)
+                .unwrap_or_else(|e| die!(2, "error setting up stdout pipe: {}", e)),
+        )
+        .stderr(
+            stdio_from_name(args.stderr_output(true).as_ref(), false)
+                .unwrap_or_else(|e| die!(2, "error setting up stderr pipe: {}", e)),
+        )
+        .stdin(
+            stdio_from_name(args.stdin_output(true).as_ref(), true)
+                .unwrap_or_else(|e| die!(2, "error setting up stdin pipe: {}", e)),
+        )
     cmd
 }
 
@@ -404,6 +429,7 @@ pub fn run_watch(
                 die!(3, "error encountered: {}", e);
             }
         }
+        let event = FileEvent::from(event);
         match event {
             FileEvent::Write => (),
             FileEvent::Remove => die!(0, "file removed, stopping..."),
@@ -425,15 +451,42 @@ pub fn run_watch(
             delete_func(exts_to_delete, args);
         }
         println!("\n{0}Executing...{0}\n", padding);
+        if let Some(child) = child {
+            if let Err(e) = child.kill() {
+                die!(4, "error killing process: {}", e),
+            }
+        }
         child = Some(
             exec_cmd
                 .spawn()
                 .unwrap_or_else(|e| die!(3, "error encountered: {}", e)),
         );
     }
+    if let Some(child) = child {
+        if let Err(e) = child.kill() {
+            die!(4, "error killing process: {}", e),
+        }
+    }
     0
 }
 
 pub fn run_multiple(args: &Args) -> i32 {
     crate::app::run_app(args)
+}
+
+fn stdio_from_name(name: Option<&OutputName>, read: bool) -> io::Result<Stdio> {
+    let Some(name) = name else {
+        return Ok(Stdio::inherit());
+    };
+    if name.name() == "" {
+        return Ok(Stdio::null());
+    }
+    if read {
+        return File::options().read(true).open(name.name()).map(|f| f.into());
+    }
+    File::options()
+        .append(name.append())
+        .create(true)
+        .open(name.name())
+        .map(|f| f.into())
 }

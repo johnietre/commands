@@ -71,6 +71,53 @@ impl FileType {
             R => run_r,
             RS => run_rs,
             SWIFT => run_swift,
+            //TS => run_ts,
+        }
+    }
+
+    /*
+    pub fn prog(self) -> &'static str {
+        use FileType::*;
+        match self {
+            BASH => run_bash,
+            C => run_c,
+            CPP => run_cpp,
+            F90 => run_f90,
+            GO => run_go,
+            HS => run_hs,
+            JAV => run_jav,
+            JL => run_jl,
+            JS => run_js,
+            ML => run_ml,
+            PL => run_pl,
+            PY => run_py,
+            R => run_r,
+            RS => run_rs,
+            SWIFT => "swift",
+            TS => "deno",
+        }
+    }
+    */
+
+    pub fn default_args(self) -> &'static [&'static str] {
+        use FileType::*;
+        match self {
+            BASH => &[],
+            C => &["-std=c18"],
+            CPP => &["-std=gnu++17"],
+            F90 => &["gfortran"],
+            GO => &[],
+            HS => &[],
+            JAV => &[],
+            JL => &[],
+            JS => &[],
+            ML => &[],
+            PL => &[],
+            PY => &[],
+            R => &[],
+            RS => &["--edition=2021"],
+            SWIFT => &[],
+            //TS => &[],
         }
     }
 }

@@ -72,6 +72,55 @@ pub struct Args {
     #[clap(short, long)]
     /// Continuously watch the input file(s) and restart the program on each write.
     pub watch: bool,
+
+    #[clap(long)]
+    /// Configure when/how to restart a program automatically.
+    pub restart_conf: Option<RestartConfig>,
+
+    #[clap(long)]
+    /// Where to pipe the execution command's stdout to. Not being set defaults to piping to the
+    /// parent's stdout. Passing an empty string discards stdout. Setting it to something creates
+    /// (or possibly appends to) the file specified. Without setting the appropriate append flag,
+    /// the file is overwritten if it already exists.
+    pub stdout: Option<String>,
+
+    #[clap(long)]
+    /// Append the stdout output to the file specified. No effect if stdout is not piped to a file.
+    /// Creates the file is it doesn't already exist.
+    pub append_stdout: Option<bool>,
+
+    #[clap(long)]
+    /// Where to pipe the execution command's stderr to. Not being set defaults to piping to the
+    /// parent's stderr. Passing an empty string discards stderr. Setting it to something creates
+    /// (or possibly appends to) the file specified. Without setting the appropriate append flag,
+    /// the file is overwritten if it already exists.
+    pub stderr: Option<String>,
+
+    #[clap(long)]
+    /// Append the stderr output to the file specified. No effect if stderr is not piped to a file.
+    /// Creates the file is it doesn't already exist.
+    pub append_stderr: Option<bool>,
+
+    #[clap(long)]
+    /// Where to read the execution command's stdin from. Not being set default to piping from the
+    /// parent's stdin. Passing an empty string pipes from null (i.e., closes input). Settings it
+    /// to something opens the file specified to read stdin from.
+    pub stdin: Option<String>,
+
+    #[clap(long)]
+    pub comp_stdout: Option<String>,
+
+    #[clap(long)]
+    pub append_comp_stdout: Option<bool>,
+
+    #[clap(long)]
+    pub comp_stderr: Option<String>,
+
+    #[clap(long)]
+    pub append_comp_stderr: Option<bool>,
+
+    #[clap(long)]
+    pub comp_stdin: Option<String>,
 }
 
 impl Args {
@@ -79,4 +128,113 @@ impl Args {
     pub fn prog<S: ToString>(&self, alt: S) -> String {
         self.program.as_ref().cloned().unwrap_or(alt.to_string())
     }
+
+    pub fn stdout_name(&self, comp: bool) -> Option<OutputName> {
+        if comp {
+            Some(OutputName::from_parts(self.comp_stdout.clone()?, self.append_comp_stdout))
+        } else {
+            Some(OutputName::from_parts(self.stdout.clone()?, self.append_stdout))
+        }
+    }
+
+    pub fn stderr_name(&self, comp: bool) -> Option<OutputName> {
+        if comp {
+            Some(OutputName::from_parts(self.comp_stderr.clone()?, self.append_comp_stderr))
+        } else {
+            Some(OutputName::from_parts(self.stderr.clone()?, self.append_stderr))
+        }
+    }
+
+    pub fn stdin_name(&self, comp: bool) -> Option<OutputName> {
+        if comp {
+            Some(OutputName::from_parts(self.comp_stdin.clone()?, None))
+        } else {
+            Some(OutputName::from_parts(self.stdin.clone()?, None))
+        }
+    }
+}
+
+#[derive(Serialize, Deserialize)]
+pub struct RestartConfig {
+    //#[serde(default)]
+    //pub email: Option<EmailConfig>,
+    #[serde(default)]
+    pub after_exit: Option<Program>,
+
+    #[serde(default)]
+    pub fail_statuses: Option<Vec<i32>>,
+
+    #[serde(default)]
+    pub cont_statuses: Option<Vec<i32>>,
+
+    #[serde(default)]
+    pub max_restarts: u32,
+
+    #[serde(default)]
+    pub delay: i64,
+}
+
+pub struct Program {
+    pub name: String,
+
+    #[serde(default)]
+    pub args: Option<Vec<String>>,
+
+    #[serde(default)]
+    pub must_finished: Option<bool>,
+
+    #[serde(default)]
+    pub fail_statuses: Option<Vec<i32>>,
+
+    #[serde(default)]
+    pub cont_statuses: Option<Vec<i32>>,
+
+    #[serde(default)]
+    pub stdout: Option<String>,
+
+    #[serde(default)]
+    pub stderr: Option<String>,
+
+    #[serde(default)]
+    pub stdin: Option<String>,
+}
+
+pub enum OutputName {
+    Name(String),
+    NameOpts { name: String, append: bool },
+}
+
+impl OutputName {
+    pub fn from_parts(name: String, append: Option<bool>) -> Self {
+        match append {
+            Some(append) => OutputName { name, append },
+            None => OutputName::Name(name),
+        }
+    }
+
+    pub fn name(&self) -> &str {
+        match self {
+            OutputName::Name(name) => name.as_str(),
+            OutputName::NameOpts { name, .. } => name.as_str(),
+        }
+    }
+
+    pub fn append(&self) -> &bool {
+        match self {
+            OutputName::Name(_) => false,
+            OutputName::NameOpts { append, .. } => append,
+        }
+    }
+}
+
+#[allow(dead_code)]
+#[derive(Serialize, Deserilaize)]
+pub struct EmailConfig {
+    pub from: String,
+    pub to: String,
+    pub subject: Option<String>,
+    pub username: Option<String>,
+    pub password: Option<String>,
+    pub username_env: Option<String>,
+    pub password_env: Option<String>,
 }

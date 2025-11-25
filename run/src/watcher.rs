@@ -1,11 +1,35 @@
 use std::fs;
 use std::io;
 use std::path::Path;
-use std::sync::mpsc::{sync_channel, Receiver};
+use std::sync::mpsc::{channel, sync_channel, Receiver};
 use std::thread;
 use std::time;
 
-pub fn watch(path: impl AsRef<Path>) -> io::Result<Receiver<FileEvent>> {
+// TODO
+pub fn watch(path: impl AsRef<Path>) -> notify::Result<Receiver<FileEvent>> {
+    let (tx, rx) = channel::<notify::Result<notify::Event>>();
+    let mut watcher = notify::recommended_watcher(tx)?;
+    watcher.watch(path.as_ref(), notify::RecursiveMode::NonRecursive)?;
+}
+
+pub enum FileEvent {
+    Write,
+    Remove,
+    Error(nofify::Error),
+}
+
+impl From<notify::FileEvent> for FileEvent {
+    fn from(ev: notify::FileEvent) -> Self {
+        match ev.kind {
+            notify::EventKind::Create | notify::EventKind::Modify => FileEvent::Write,
+            notify::EventKind::Remove => FileEvent::Remove,
+            notify::EventKind::Remove => FileEvent::Remove,
+        }
+    }
+}
+
+#[allow(dead_code)]
+pub fn watch_naive(path: impl AsRef<Path>) -> io::Result<Receiver<FileEvent>> {
     let path = path.as_ref().to_path_buf();
     let (tx, rx) = sync_channel(1);
     let mut prev_info = fs::metadata(&path)?;
@@ -48,7 +72,7 @@ pub fn watch(path: impl AsRef<Path>) -> io::Result<Receiver<FileEvent>> {
     Ok(rx)
 }
 
-pub enum FileEvent {
+pub enum FileEventName {
     Write,
     Remove,
     Error(io::Error),
