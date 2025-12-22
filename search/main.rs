@@ -5,6 +5,7 @@
 // TODO: When cleaning cargo, it's possible a file is removed, then attempted to be accessed.
 // TODO: Ignore dirs
 // TODO: not searching last line of cert file
+// TODO: panics when stdout (pipe?) is broken/closed
 use clap::Parser;
 use crossbeam::channel::{unbounded, Receiver, Sender};
 use regex::Regex;
